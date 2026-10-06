@@ -542,6 +542,7 @@ void V_PostRender( void )
 	{
 		SCR_TileClear();
 		CL_DrawHUD( CL_ACTIVE );
+		CL_DrawSubtitles();
 		VGui_Paint();
 	}
 

@@ -3902,6 +3902,7 @@ void CL_UnloadProgs( void )
 	CL_FreeTempEnts();
 	CL_FreeViewBeams();
 	CL_FreeParticles();
+	CL_SubtitlesShutdown();
 	CL_ClearAllRemaps();
 	Mod_ClearUserData();
 
@@ -4152,6 +4153,7 @@ qboolean CL_LoadProgs( const char *name )
 
 	CL_InitCDAudio( "media/cdaudio.txt" );
 	CL_InitTitles( "titles.txt" );
+	CL_SubtitlesInit();
 	CL_InitParticles( );
 	CL_InitViewBeams( );
 	CL_InitTempEnts( );

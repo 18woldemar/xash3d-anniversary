@@ -1620,6 +1620,7 @@ void CL_ClearState( void )
 	S_StopAllSounds ( true );
 	CL_ClearEffects ();
 	CL_FreeEdicts ();
+	CL_SubtitlesClear ();
 
 	PM_ClearPhysEnts( clgame.pmove );
 	NetAPI_CancelAllRequests();
@@ -3756,6 +3757,8 @@ static void CL_InitLocal( void )
 	Cvar_RegisterVariable( &ui_renderworld );
 	Cvar_RegisterVariable( &cl_maxframetime );
 	Cvar_RegisterVariable( &cl_fixmodelinterpolationartifacts );
+	Cvar_RegisterVariable( &cl_subtitles );
+	Cvar_RegisterVariable( &cl_subtitles_scale );
 
 	// server commands
 	Cmd_AddCommand ("noclip", NULL, "enable or disable no clipping mode" );
@@ -3919,6 +3922,8 @@ void Host_ClientFrame( void )
 
 	// read updates from server
 	CL_ReadPackets ();
+
+	CL_SubtitlesFrame ();
 
 	// do prediction again in case we got
 	// a new portion updates from server

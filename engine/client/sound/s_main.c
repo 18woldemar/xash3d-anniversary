@@ -702,6 +702,7 @@ void S_StartSound( const vec3_t pos, int ent, int chan, sound_t handle, float fv
 		// regular or streamed sound fx
 		pSource = S_LoadSound( sfx );
 		target_chan->name[0] = '\0';
+		CL_SubtitleStart( target_chan, sfx->name, NULL, sfx );
 	}
 
 	if( !pSource )
@@ -843,6 +844,7 @@ void S_RestoreSound( const vec3_t pos, int ent, int chan, sound_t handle, float 
 		// regular or streamed sound fx
 		pSource = S_LoadSound( sfx );
 		target_chan->name[0] = '\0';
+		CL_SubtitleStart( target_chan, sfx->name, NULL, sfx );
 	}
 
 	if( !pSource )
@@ -929,6 +931,7 @@ void S_AmbientSound( const vec3_t pos, int ent, sound_t handle, float fvol, floa
 		pSource = S_LoadSound( sfx );
 		ch->sfx = sfx;
 		ch->name[0] = '\0';
+		CL_SubtitleStart( ch, sfx->name, NULL, sfx );
 	}
 
 	if( !pSource )

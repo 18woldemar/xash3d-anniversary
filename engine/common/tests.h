@@ -50,6 +50,7 @@ void Test_RunBuffer( void );
 void Test_RunMunge( void );
 void Test_RunModBmodel( void );
 void Test_RunTitles( void );
+void Test_RunSubtitles( void );
 void Test_RunConfig( void );
 
 #define TEST_LIST_0 \
@@ -75,7 +76,8 @@ void Test_RunConfig( void );
 
 #define TEST_LIST_1_CLIENT \
 	Test_RunVOX(); \
-	Test_RunTitles();
+	Test_RunTitles(); \
+	Test_RunSubtitles();
 
 #endif
 

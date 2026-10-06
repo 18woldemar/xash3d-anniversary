@@ -15,6 +15,7 @@ GNU General Public License for more details.
 
 #include "common.h"
 #include "sound.h"
+#include "client.h"
 #include "const.h"
 #include <ctype.h>
 
@@ -251,9 +252,14 @@ static const char *VOX_GetDirectory( char *szpath, const char *psz, int nsize )
 	return p + 1;
 }
 
-static const char *VOX_LookupString( const char *pszin )
+// name, when asked for, comes back as the sentence file spells it: the server sends a sentence as its
+// index ("!12"), and the subtitles need the name behind it
+static const char *VOX_LookupString( const char *pszin, const char **name )
 {
 	int i = -1;
+
+	if( name )
+		*name = NULL;
 
 	// check if we are an immediate sentence
 	if( *pszin == '#' )
@@ -286,6 +292,9 @@ static const char *VOX_LookupString( const char *pszin )
 		return NULL;
 
 	int len = Q_strlen( rgpszrawsentence[i] );
+
+	if( name )
+		*name = rgpszrawsentence[i];
 
 	const char *c = &rgpszrawsentence[i][len + 1];
 	for( ; *c == ' ' || *c == '\t'; c++ );
@@ -441,7 +450,7 @@ void VOX_LoadSound( channel_t *ch, const char *pszin )
 {
 	char buffer[512] = { 0 }, szpath[32] = { 0 };
 	char *rgpparseword[CVOXWORDMAX] = { 0 };
-	const char *psz;
+	const char *psz, *name = NULL;
 	int j;
 	int num_words;
 	voxword_t default_voxword;
@@ -457,7 +466,7 @@ void VOX_LoadSound( channel_t *ch, const char *pszin )
 		Mem_Free2( &ch->words );
 	}
 
-	psz = VOX_LookupString( pszin );
+	psz = VOX_LookupString( pszin, &name );
 
 	if( !psz )
 	{
@@ -515,6 +524,9 @@ void VOX_LoadSound( channel_t *ch, const char *pszin )
 	ch->sfx = ch->words[0].sfx;
 	ch->word_index = 0;
 	VOX_LoadWord( ch );
+
+	// the one place a sentence starts on a channel, so the one place a caption can start with it
+	CL_SubtitleStart( ch, name, pszin, NULL );
 }
 
 static void VOX_ReadSentenceFile_( byte *buf, fs_offset_t size )
@@ -640,9 +652,22 @@ static void Test_VOX_LookupString( void )
 
 	for( int i = 0; i < sizeof( data ) / sizeof( data[0] ); i += 2 )
 	{
-		p = VOX_LookupString( data[i] );
+		p = VOX_LookupString( data[i], NULL );
 
 		TASSERT_STR( p, data[i+1] );
+	}
+
+	// the server sends a sentence as its index, and the subtitles need the name behind it
+	{
+		const char *name = (const char *)0xDEADBEEF;
+
+		p = VOX_LookupString( "1", &name );
+		TASSERT_STR( p, "456" );
+		TASSERT_STR( name, "CaseInsensitive" );
+
+		p = VOX_LookupString( "404", &name );
+		TASSERT_EQp( p, NULL );
+		TASSERT_EQp( name, NULL );
 	}
 
 	cszrawsentences = 0;

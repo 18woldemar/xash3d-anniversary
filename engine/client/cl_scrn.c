@@ -747,6 +747,8 @@ void SCR_LoadCreditsFont( void )
 			clgame.scrInfo.charWidths[i] = cls.creditsFont.charWidths[i];
 	}
 	else Con_DPrintf( S_ERROR "failed to load HUD font\n" );
+
+	CL_SubtitlesLoadFont(); // the subtitles draw with the same font, one size up
 }
 
 /*

@@ -858,6 +858,19 @@ int CL_DrawStringf( cl_font_t *font, float x, float y, const rgba_t color, int f
 
 
 //
+// cl_subtitles.c
+//
+extern convar_t cl_subtitles;
+extern convar_t cl_subtitles_scale;
+void CL_SubtitlesInit( void );
+void CL_SubtitlesLoadFont( void );
+void CL_SubtitlesClear( void );
+void CL_SubtitlesShutdown( void );
+void CL_SubtitleStart( const struct channel_s *ch, const char *name, const char *chname, const struct sfx_s *sfx );
+void CL_DrawSubtitles( void );
+void CL_SubtitlesFrame( void );
+
+//
 // cl_game.c
 //
 void CL_UnloadProgs( void );
