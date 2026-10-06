@@ -892,7 +892,20 @@ return size of file in bytes
 fs_offset_t FS_FileSize( const char *filename, qboolean gamedironly )
 {
 	int length = -1; // in case file was missed
-	file_t *fp = FS_Open( filename, "rb", gamedironly );
+	int pack_ind;
+	searchpath_t *search;
+	file_t *fp;
+
+	// an archive knows the size from its directory. Opening the file to ask costs a seek on a slow drive,
+	// and a level change asks for every precached sound and model (SV_CreateResourceList)
+	search = FS_FindFile( filename, &pack_ind, NULL, 0, gamedironly ? FS_GAMEDIRONLY_SEARCH_FLAGS : 0 );
+
+	if( search && search->pfnFileSize && pack_ind >= 0 )
+		return search->pfnFileSize( search, filename, pack_ind );
+
+	// no match in an archive is not the same as no file: FS_Open still strips a leading separator and
+	// checks the path, which is how a name like "/models/foo.mdl" finds its file
+	fp = FS_Open( filename, "rb", gamedironly );
 
 	if( fp )
 	{

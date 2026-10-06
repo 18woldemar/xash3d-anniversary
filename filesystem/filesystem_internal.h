@@ -115,6 +115,8 @@ typedef struct searchpath_s
 	void    (*pfnClose)( struct searchpath_s *search );
 	file_t *(*pfnOpenFile)( struct searchpath_s *search, const char *filename, const char *mode, int pack_ind );
 	int     (*pfnFileTime)( struct searchpath_s *search, const char *filename );
+	// the size straight from the archive's directory; NULL when the backend has to open the file for it
+	fs_offset_t (*pfnFileSize)( struct searchpath_s *search, const char *filename, int pack_ind );
 	int     (*pfnFindFile)( struct searchpath_s *search, const char *path, char *fixedname, size_t len );
 	void    (*pfnSearch)( struct searchpath_s *search, stringlist_t *list, const char *pattern, int caseinsensitive );
 	byte   *(*pfnLoadFile)( struct searchpath_s *search, const char *path, int pack_ind, fs_offset_t *filesize, void *( *pfnAlloc )( size_t ), void ( *pfnFree )( void * ));

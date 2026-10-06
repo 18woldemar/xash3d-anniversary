@@ -395,6 +395,11 @@ FS_FileTime_WAD
 
 ===========
 */
+static fs_offset_t FS_FileSize_WAD( searchpath_t *search, const char *filename, int pack_ind )
+{
+	return search->wad->lumps[pack_ind].size;
+}
+
 static int FS_FileTime_WAD( searchpath_t *search, const char *filename )
 {
 	return search->wad->filetime;
@@ -638,6 +643,7 @@ searchpath_t *FS_AddWad_Fullpath( const char *wadfile, int flags )
 	search->pfnClose = FS_Close_WAD;
 	search->pfnOpenFile = FS_OpenFile_WAD;
 	search->pfnFileTime = FS_FileTime_WAD;
+	search->pfnFileSize = FS_FileSize_WAD;
 	search->pfnFindFile = FS_FindFile_WAD;
 	search->pfnSearch = FS_Search_WAD;
 	search->pfnLoadFile = W_ReadLump;

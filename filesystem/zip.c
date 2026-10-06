@@ -610,6 +610,11 @@ FS_FileTime_ZIP
 
 ===========
 */
+static fs_offset_t FS_FileSize_ZIP( searchpath_t *search, const char *filename, int pack_ind )
+{
+	return search->zip->files[pack_ind].size;
+}
+
 static int FS_FileTime_ZIP( searchpath_t *search, const char *filename )
 {
 	return search->zip->handle->filetime;
@@ -739,6 +744,7 @@ searchpath_t *FS_AddZip_Fullpath( const char *zipfile, int flags )
 	search->pfnClose = FS_Close_ZIP;
 	search->pfnOpenFile = FS_OpenFile_ZIP;
 	search->pfnFileTime = FS_FileTime_ZIP;
+	search->pfnFileSize = FS_FileSize_ZIP;
 	search->pfnFindFile = FS_FindFile_ZIP;
 	search->pfnSearch = FS_Search_ZIP;
 	search->pfnLoadFile = FS_LoadZIPFile;

@@ -294,6 +294,11 @@ FS_FileTime_PAK
 
 ===========
 */
+static fs_offset_t FS_FileSize_PAK( searchpath_t *search, const char *filename, int pack_ind )
+{
+	return search->pack->files[pack_ind].filelen;
+}
+
 static int FS_FileTime_PAK( searchpath_t *search, const char *filename )
 {
 	return search->pack->handle->filetime;
@@ -363,6 +368,7 @@ searchpath_t *FS_AddPak_Fullpath( const char *pakfile, int flags )
 	search->pfnClose = FS_Close_PAK;
 	search->pfnOpenFile = FS_OpenFile_PAK;
 	search->pfnFileTime = FS_FileTime_PAK;
+	search->pfnFileSize = FS_FileSize_PAK;
 	search->pfnFindFile = FS_FindFile_PAK;
 	search->pfnSearch = FS_Search_PAK;
 
