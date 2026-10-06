@@ -14,7 +14,8 @@
 # which the engine reads over valve/.
 # The legend's icons are the Xbox face buttons of AL2009man/Gamepad-Asset-Pack (MIT, (c) 2024 Al. Lopez): a
 # build that ships them carries that licence. The controller is tools/menu/360_controller.svg (CC BY-SA 3.0).
-# Usage: [MKMENU_FONT=...trebucbd.ttf] [MKMENU_PADS=<Gamepad-Prompt-Asset-Pack checkout>] mkmenu [run tree]
+# Usage: [MKMENU_FONT=...trebucbd.ttf] [MKMENU_PADS=<Gamepad-Prompt-Asset-Pack checkout>] [MKMENU_PAD_ICONS=<dir>]
+#        mkmenu [run tree]
 #        mkmenu --sheet out.png   writes a comparison sheet instead (ours under Valve's, upscaled the same way)
 # Env: MKMENU_DATA is the game data (default ~/src/xbox-dev/assets/HalfLife-Steam); MKMENU_LOADING, if set,
 # names a 1280x720 loading picture to install as gfx/shell/loading.tga. Needs Pillow and cairosvg
@@ -329,9 +330,15 @@ art = os.path.join(tools, 'menu')
 shell = os.path.join(run, 'valve', 'gfx', 'shell')
 os.makedirs(shell, exist_ok=True)
 
-# The legend's icons: the Xbox face buttons, which a Steam Deck and every XInput pad share
+# The legend's icons: the Xbox face buttons, which a Steam Deck and every XInput pad share. MKMENU_PAD_ICONS
+# names a directory of ready pictures (pad_a.png, pad_b.png, pad_x.png, pad_y.png) to use instead of the pack;
+# whatever is in it is the builder's to answer for, since nothing of it enters the repository.
+icons = os.environ.get('MKMENU_PAD_ICONS')
 pads = os.path.expanduser(os.environ.get('MKMENU_PADS', '/tmp/gpack/Gamepad-Asset-Pack/Gamepad-Prompt-Asset-Pack'))
 for name, face in (('pad_a', 'A'), ('pad_b', 'B'), ('pad_x', 'X'), ('pad_y', 'Y')):
+	if icons and os.path.exists(os.path.join(icons, name + '.png')):
+		write_tga(Image.open(os.path.join(icons, name + '.png')).convert('RGBA'), os.path.join(shell, name + '.tga'))
+		continue
 	svg = os.path.join(pads, 'Shared', f'shared-{face}-Color.svg')
 	if not os.path.exists(svg):
 		sys.exit(f'mkmenu: {svg} is missing - clone AL2009man/Gamepad-Asset-Pack with its submodules, set MKMENU_PADS')
