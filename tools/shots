@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Fixed-camera shots for renderer comparison: runs the build through tools/run with the engine command shots
+# and grabs the window each time the log says "shots: ready <name>", into <workspace>/shots/<set>/<name>.png.
+# Usage: shots <set> [shots file] [seconds]   (default: shots.txt next to this script, 900 s)
+# SHOTS_ARGS adds engine arguments (e.g. "+r_showhull 1"). Compare two sets with cmpshots.
+set -uo pipefail
+[ $# -ge 1 ] || { sed -n '2,5p' "$0" >&2; exit 2; }
+tools=$(dirname "$(readlink -f "$0")")
+top=$(readlink -f "$tools/../..")
+list=${2:-$tools/shots.txt}
+limit=${3:-900}
+out=$top/shots/$1
+run=${RUN_DIR:-$top/run/halflife}
+log=$run/engine.log
+# the 1280x720 window sits centred on the 1920x1080 headless screen
+crop=1280x720+320+180
+mkdir -p "$out" "$run/valve"
+rm -f "$out"/*.png
+cp "$list" "$run/valve/shots.txt"
+rm -f "$log"
+RUN_TIMEOUT=$limit "$tools/run" run -randomseed 1 ${SHOTS_ARGS:-} +shots shots.txt > /tmp/shots-run.out 2>&1 &
+runner=$!
+
+taken=0
+start=$SECONDS
+while ((SECONDS - start < limit)); do
+  sleep 0.5
+  line=$(grep -a "shots: ready" "$log" 2> /dev/null | sed -n "$((taken + 1))p")
+  if [ -n "$line" ]; then
+    name=$(sed 's/.*ready \([^ ]*\).*/\1/' <<< "$line")
+    sleep "${SHOTS_DELAY:-1}"
+    DISPLAY=${DISPLAY_RUN:-:1} import -window root png:- | convert - -crop "$crop" +repage "$out/$name.png"
+    echo "$name: ${line#*ready $name }"
+    taken=$((taken + 1))
+    continue
+  fi
+  grep -aq "shots: done" "$log" 2> /dev/null && break
+  kill -0 $runner 2> /dev/null || break
+done
+
+# exact name: a pattern match could hit this shell
+pkill -KILL -x xash3d 2> /dev/null
+wait $runner 2> /dev/null
+grep -aE "shots: (done|.*incomplete|can't)" "$log" 2> /dev/null
+echo "shots: $taken shots in $out"
+[ "$taken" -gt 0 ]

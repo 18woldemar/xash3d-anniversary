@@ -1,0 +1,29 @@
+// Fixed camera shots for comparing renderers (tools/shots, tools/cmpshots).
+// name map x y z pitch yaw roll; picked from generated candidates on 2026-09-17
+c1a0_lift c1a0 484 318 -176 0 180 0
+c1a0_consoles c1a0 -848 464 -152 0 0 0
+c1a0_corridor c1a0 -1099 700 -152 0 0 0
+c1a0_monitors c1a0 -112 224 -152 7.0 -79.6 0
+c1a0_window c1a0 -656 -736 -152 -20.0 148.9 0
+c1a0_desk c1a0 -112 224 -152 26.7 68.4 0
+c1a0_grates c1a0 -624 -1104 -152 -37.4 85.9 0
+c1a2_office c1a2 2972 -894 -508 0 260 0
+c1a2_vending c1a2 2634 -666 -528 0 90 0
+c1a2_redroom c1a2 2672 -936 -528 -27.2 -106.3 0
+c1a2_blood c1a2 1272 -632 -528 2.0 159.5 0
+c1a2_doors c1a2 -172 -952 -504 15.1 176.2 0
+c1a2_funcwater c1a2 814 -402 -494 17.3 28.2 0
+c2a5_road c2a5 -176 -16 -8 0 180 0
+c2a5_barrels c2a5 2080 -368 124 0 180 0
+c2a5_sign c2a5 -1760 -96 -8 5.8 117.6 0
+c2a5_skyup c2a5 2240 -304 124 -53.6 -35.5 0
+c2a5_river c2a5 -110 1907 -220 7.0 169.1 0
+c2a5_river2 c2a5 -886 1576 -220 7.3 -32.5 0
+c3a1_stripes c3a1 -1052 -80 516 0 0 0
+c3a1_grating c3a1 -2020 192 472 47.1 160.8 0
+c3a1_hall c3a1 572 -536 628 2.8 57.7 0
+c3a1_bridge c3a1 -2020 424 472 8.4 -164.4 0
+c3a1_water c3a1 -1639 102 396 7.2 -163.8 0
+c3a1_catwalk c3a1 -2020 424 472 0 0 0
+c2a5_underwater c2a5 -110 1907 -400 10 169.1 0
+c3a1_underwater c3a1 -1639 102 270 5 -163.8 0

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Compares two shot sets (tools/shots) picture by picture: pixels that differ by more than 8% (ImageMagick fuzz) and the
+# mean colour per channel. A pair passes with at most 1% of pixels different and every channel mean within
+# 3 levels. Difference images go to <B>/diff/.
+# Usage: cmpshots A B
+set -uo pipefail
+[ $# -eq 2 ] || { sed -n '2,5p' "$0" >&2; exit 2; }
+a=$1
+b=$2
+mkdir -p "$b/diff"
+fails=0
+printf '%-24s %8s  %-26s %s\n' shot differ "mean A-B (r g b)" result
+for fa in "$a"/*.png; do
+  name=$(basename "$fa" .png)
+  fb=$b/$name.png
+  if [ ! -f "$fb" ]; then printf '%-24s missing in %s\n' "$name" "$b"; fails=$((fails + 1)); continue; fi
+  ae=$(compare -fuzz 8% -metric AE "$fa" "$fb" "$b/diff/$name.png" 2>&1 >/dev/null | cut -d' ' -f1)
+  total=$(identify -format '%[fx:w*h]' "$fa")
+  ma=$(convert "$fa" -format '%[fx:mean.r*255] %[fx:mean.g*255] %[fx:mean.b*255]' info:)
+  mb=$(convert "$fb" -format '%[fx:mean.r*255] %[fx:mean.g*255] %[fx:mean.b*255]' info:)
+  line=$(python3 -c "
+a=[float(x) for x in '$ma'.split()]; b=[float(x) for x in '$mb'.split()]
+pct=100.0*float('$ae')/float('$total')
+d=[x-y for x,y in zip(a,b)]
+ok=pct<=1.0 and all(abs(x)<=3.0 for x in d)
+print('%7.2f%%  %+6.2f %+6.2f %+6.2f       %s' % (pct, d[0], d[1], d[2], 'pass' if ok else 'FAIL'))")
+  printf '%-24s %s\n' "$name" "$line"
+  [[ $line == *FAIL ]] && fails=$((fails + 1))
+done
+echo "cmpshots: $fails failing"
+[ "$fails" -eq 0 ]

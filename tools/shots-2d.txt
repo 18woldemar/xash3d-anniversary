@@ -1,0 +1,5 @@
+// 2D over a fixed world camera: HUD, console, menu.
+// Run with SHOTS_ARGS="+shots_models 1"; text that differs by build (version, log) is expected.
+hud_c1a0 c1a0 484 318 -176 0 180 0 cmd "impulse 101; hud_draw 1; crosshair 1; wait; wait; wait; wait; wait; weapon_9mmAR"
+console_c1a0 c1a0 484 318 -176 0 180 0 cmd "clear; echo The quick brown fox jumps over the lazy dog 0123456789; toggleconsole"
+menu_c1a0 c1a0 484 318 -176 0 180 0 cmd "toggleconsole; togglemenu"

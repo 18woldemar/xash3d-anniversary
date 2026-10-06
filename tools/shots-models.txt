@@ -1,0 +1,15 @@
+// Model shots: SHOTS_ARGS="-nosound +shots_models 1" (sound draws on the shared random numbers).
+// Linux repeats 11 of 13 to 0.3%; the crowbar idle and one grunt vary by up to 3%. The tentacle stays in its pit (checked in play).
+c1a0_barney1 c1a0 -74 408 -182 2.1 180.0 0
+c1a0_scientist0 c1a0 -822 104 -176 2.1 -0.0 0
+c1a0_scientist1 c1a0 -358 -382 -175 2.1 93.0 0
+c1a0_scientist2 c1a0 -98 500 -183 2.1 180.0 0
+c1a0_scientist3 c1a0 40 207 -183 2.1 -12.0 0
+c1a0_v_crowbar c1a0 484 318 -176 10 180 0 cmd "impulse 101; weapon_crowbar"
+c1a0_v_glock c1a0 484 318 -176 10 180 0 cmd "impulse 101; weapon_9mmhandgun"
+c1a1_barney0 c1a1 1080 2034 768 2.1 -37.0 0
+c1a1_zombie0 c1a1 416 1961 771 2.1 128.0 0
+c1a2_headcrab1 c1a2 952 -321 -476 2.1 124.0 0
+c1a3a_human_grunt0 c1a3a 654 -2094 56 2.1 135.0 0
+c1a3a_human_grunt1 c1a3a 1075 -2353 56 2.1 167.0 0
+c1a3a_human_grunt2 c1a3a 1060 -2391 -72 2.1 12.0 0
