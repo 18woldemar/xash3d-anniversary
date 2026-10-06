@@ -3680,6 +3680,7 @@ static void CL_InitLocal( void )
 	Cvar_RegisterVariable( &cl_autorecord );
 
 	Cvar_RegisterVariable( &showpause );
+	Shots_Init();
 	Cvar_RegisterVariable( &mp_decals );
 	Cvar_RegisterVariable( &dev_overview );
 	Cvar_RegisterVariable( &cl_resend );
@@ -3943,6 +3944,8 @@ void Host_ClientFrame( void )
 
 	// catch changes video settings
 	VID_CheckChanges();
+
+	Shots_Frame();
 
 	// update the screen
 	SCR_UpdateScreen ();

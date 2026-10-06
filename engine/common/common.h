@@ -494,6 +494,10 @@ void Image_Setup( void );
 void Image_Init( void );
 void Image_Shutdown( void );
 void Image_AddCmdFlags( uint flags );
+void Shots_Init( void ); // shots.c
+void Shots_Frame( void );
+qboolean Shots_Active( void );
+qboolean Shots_View( float *origin, float *angles );
 void FS_FreeImage( rgbdata_t *pack );
 rgbdata_t *FS_LoadImage( const char *filename, const byte *buffer, size_t size ) MALLOC_LIKE( FS_FreeImage, 1 ) WARN_UNUSED_RESULT;
 qboolean FS_SaveImage( const char *filename, rgbdata_t *pix );

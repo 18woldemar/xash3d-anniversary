@@ -935,6 +935,10 @@ qboolean CL_AddVisibleEntity( cl_entity_t *ent, int entityType )
 	if( !ent || !ent->model )
 		return false;
 
+	// renderer comparison shots cover the world and brush entities only
+	if( ent->model->type != mod_brush && Shots_Active( ))
+		return false;
+
 	// don't add the player in firstperson mode
 	if( RP_LOCALCLIENT( ent ))
 	{

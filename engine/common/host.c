@@ -1050,6 +1050,11 @@ static void Host_InitCommon( int argc, char **argv, const char *progname, qboole
 			developer = bound( DEV_NONE, developer, DEV_EXTENDED );
 	}
 
+	// repeatable runs: the renderer fills its random tiling table at start
+	int random_seed;
+	if( Sys_GetIntFromCmdLine( "-randomseed", &random_seed ))
+		COM_SetRandomSeed( random_seed );
+
 #if XASH_ENGINE_TESTS
 	if( Sys_CheckParm( "-runtests" ))
 	{
