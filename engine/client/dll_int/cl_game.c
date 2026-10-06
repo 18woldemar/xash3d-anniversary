@@ -2216,6 +2216,13 @@ static void GAME_EXPORT pfnCalcShake( void )
 	float fraction = ((float)cl.time - shake->time ) / shake->duration;
 	float freq = fraction != 0.0f ? ( shake->frequency / fraction ) * shake->frequency : 0.0f;
 
+	// the fraction walks to zero as the shake ends, so the frequency it divides runs away with it. The sine
+	// of an argument that large has no phase left to carry, and some C libraries answer NaN to it - a NaN
+	// that travels through the view angles into every trace the frame makes. The comparison is written
+	// inverted so that a NaN lands here too.
+	if( !( freq > -1000.0f && freq < 1000.0f ))
+		freq = freq < 0.0f ? -1000.0f : 1000.0f;
+
 	// keep motors running slightly past the frame so they stop by themselves if the shake is never updated again
 	Mobile_ShakeVibrate( shake->amplitude * fraction * fraction, shake->frequency, 100.0f );
 
