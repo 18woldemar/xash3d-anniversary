@@ -1362,6 +1362,9 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
 		// exec all files from userconfig.d
 		Cbuf_AddText( "userconfigd\n" );
 		Cbuf_Execute();
+#if !XASH_DEDICATED
+		Key_PadLayout();
+#endif
 		break;
 	case HOST_DEDICATED:
 		// allways parse commandline in dedicated-mode

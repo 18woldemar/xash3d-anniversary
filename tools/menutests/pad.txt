@@ -1,0 +1,22 @@
+// The pad layout of the 25th anniversary update over a game, with -gamepadui: START held quicksaves and opens no
+// menu, START tapped opens the menu, a held d-pad direction repeats there.
+fps_max 60
+map c1a0
+wait 400
+echo MENUTEST start-hold
+key_event START down
+wait 60
+key_event START up
+wait 120
+echo MENUTEST start-tap
+key_event START down
+wait 6
+key_event START up
+wait 60
+echo MENUTEST menu-repeat
+key_event DPAD_DOWN down
+wait 90
+key_event DPAD_DOWN up
+wait 30
+echo MENUTEST done
+quit

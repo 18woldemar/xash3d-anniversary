@@ -114,26 +114,29 @@ static const keyname_t keynames[] =
 { "PAUSE",          K_PAUSE,               "pause"           },
 
 // Gamepad
-// A/B X/Y names match the Xbox controller layout
+// A/B X/Y names match the Xbox controller layout. The binds are Valve's pad layout of the 25th anniversary
+// update (valve/controller_configs/xbox_controller_config_standard.vdf): the bumpers and d-pad left pick at
+// once, as its wheel-plus-click does. START opens the menu on a tap and quicksaves when held in a game
+// (Key_PadStart), as Valve's layout has it. Change them together with PAD_LAYOUT below.
 { "A_BUTTON",       K_A_BUTTON,            "+jump"           },
-{ "B_BUTTON",       K_B_BUTTON,            "+use"            },
-{ "X_BUTTON",       K_X_BUTTON,            "+reload"         },
-{ "Y_BUTTON",       K_Y_BUTTON,            "impulse 100"     }, // Flashlight
-{ "BACK",           K_BACK_BUTTON,         "pause"           }, // Menu
+{ "B_BUTTON",       K_B_BUTTON,            "+duck"           },
+{ "X_BUTTON",       K_X_BUTTON,            "+use"            },
+{ "Y_BUTTON",       K_Y_BUTTON,            "+reload"         },
+{ "BACK",           K_BACK_BUTTON,         "impulse 100"     }, // Flashlight
 { "MODE",           K_MODE_BUTTON,         ""                },
 { "START",          K_START_BUTTON,        "cancelselect"    },
-{ "STICK1",         K_LSTICK,              "+speed"          },
-{ "STICK2",         K_RSTICK,              "+duck"           },
-{ "L1_BUTTON",      K_L1_BUTTON,           "+duck"           },
-{ "R1_BUTTON",      K_R1_BUTTON,           "+attack"         },
-{ "DPAD_UP",        K_DPAD_UP,             "impulse 201"     }, // Spray
-{ "DPAD_DOWN",      K_DPAD_DOWN,           "lastinv"         },
-{ "DPAD_LEFT",      K_DPAD_LEFT,           "invprev"         },
-{ "DPAD_RIGHT",     K_DPAD_RIGHT,          "invnext"         },
-{ "L2_BUTTON",      K_L2_BUTTON,           "+speed"          },
-{ "R2_BUTTON",      K_R2_BUTTON,           "+attack2"        },
-{ "LTRIGGER",       K_JOY1,                "+speed"          }, // L2 in SDL2
-{ "RTRIGGER",       K_JOY2,                "+attack2"        }, // R2 in SDL2
+{ "STICK1",         K_LSTICK,              "toggle_duck"     },
+{ "STICK2",         K_RSTICK,              "impulse 100"     }, // Flashlight
+{ "L1_BUTTON",      K_L1_BUTTON,           "invprev; invselect" },
+{ "R1_BUTTON",      K_R1_BUTTON,           "invnext; invselect" },
+{ "DPAD_UP",        K_DPAD_UP,             "invprev"         }, // fire takes it
+{ "DPAD_DOWN",      K_DPAD_DOWN,           "invnext"         },
+{ "DPAD_LEFT",      K_DPAD_LEFT,           "slot1; invselect" }, // Crowbar
+{ "DPAD_RIGHT",     K_DPAD_RIGHT,          "lastinv"         },
+{ "L2_BUTTON",      K_L2_BUTTON,           ""                },
+{ "R2_BUTTON",      K_R2_BUTTON,           ""                },
+{ "LTRIGGER",       K_JOY1,                "+attack2"        }, // L2 in SDL2
+{ "RTRIGGER",       K_JOY2,                "+attack"         }, // R2 in SDL2
 { "JOY3",           K_JOY3,                ""                },
 { "JOY4",           K_JOY4,                ""                },
 { "C_BUTTON",       K_C_BUTTON,            ""                },
@@ -168,6 +171,20 @@ static const keyname_t keynames[] =
 };
 
 static CVAR_DEFINE_AUTO( key_rotate, "0", FCVAR_ARCHIVE|FCVAR_FILTERABLE, "rotate arrow keys (0-3)" );
+#define PAD_LAYOUT 1 // 1: Valve's layout of the 25th anniversary update, with the look shaped for a stick
+static CVAR_DEFINE_AUTO( pad_layout, "0", FCVAR_ARCHIVE, "the pad layout config.cfg's pad binds were written for; the gamepad UI gives an older one the current defaults" );
+#define PAD_QUICKSAVE_HOLD 0.5 // seconds of START in a game that make a quicksave
+#define PAD_REPEAT_DELAY   0.4 // seconds a held direction waits before it repeats in the gamepad UI
+#define PAD_REPEAT_STEP    0.125 // then one step per this many seconds
+
+static struct
+{
+	double   start_time; // START went down in a game then; 0 when it is not held that way
+	qboolean start_saved; // that press already quicksaved
+	qboolean replay;     // the tap is being sent on
+	int      held;       // the direction repeating in the menu
+	double   next;       // when it repeats next
+} key_pad;
 
 /*
 ===================
@@ -369,6 +386,109 @@ static void Key_Unbind_f( void )
 
 /*
 ===================
+Key_PadLayout
+
+After config.cfg, in the gamepad UI: pad binds written for an older layout make way for the current defaults,
+once, and so does the look, which belongs to the pad as much as the binds do. A desktop config keeps whatever
+its player bound.
+===================
+*/
+void Key_PadLayout( void )
+{
+	if( pad_layout.value >= PAD_LAYOUT || !Cvar_VariableInteger( "ui_gamepadui" ))
+		return;
+
+	for( int i = 0; i < ARRAYSIZE( keynames ); i++ )
+	{
+		if( keynames[i].keynum >= K_JOY1 && keynames[i].keynum <= K_AUX32 )
+			Key_SetBinding( keynames[i].keynum, keynames[i].binding );
+	}
+
+	Cvar_Set( "joy_yaw", DEFAULT_JOY_YAW );
+	Cvar_Set( "joy_pitch", DEFAULT_JOY_PITCH );
+	Cvar_Set( "joy_look_curve", DEFAULT_JOY_LOOK_CURVE );
+	Cvar_Set( "joy_look_deadzone", DEFAULT_JOY_LOOK_DEADZONE );
+	Cvar_DirectSet( &pad_layout, va( "%d", PAD_LAYOUT ));
+}
+
+/*
+===================
+Key_PadStart
+
+START in a game waits for its release: a tap sends the button on (the menu), a hold of half a second quicksaves
+instead and swallows the press - Valve's layout of the 25th anniversary update, whose START is Menu on a press
+and Quicksave on a long one. Menus and the console take it at once. Returns true when the event was taken here.
+===================
+*/
+static qboolean Key_PadStart( qboolean down )
+{
+	if( down )
+	{
+		if( cls.state != ca_active || cls.key_dest != key_game )
+			return false;
+
+		key_pad.start_time = host.realtime;
+		key_pad.start_saved = false;
+		return true;
+	}
+
+	if( key_pad.start_time == 0.0 )
+		return false;
+
+	// the tap only acts where it was swallowed: a menu that opened meanwhile would read it as its own
+	if( !key_pad.start_saved && cls.state == ca_active && cls.key_dest == key_game )
+	{
+		key_pad.replay = true;
+		Key_Event( K_START_BUTTON, true );
+		Key_Event( K_START_BUTTON, false );
+		key_pad.replay = false;
+	}
+	key_pad.start_time = 0.0;
+	return true;
+}
+
+/*
+===================
+Key_PadFrame
+===================
+*/
+void Key_PadFrame( void )
+{
+	// a held d-pad or stick direction repeats in the gamepad UI, as console menus do; the keyboard has its
+	// own repeat, so the desktop menu is left to it
+	static const int directions[] =
+	{
+		K_DPAD_UP, K_DPAD_DOWN, K_DPAD_LEFT, K_DPAD_RIGHT,
+		K_UPARROW, K_DOWNARROW, K_LEFTARROW, K_RIGHTARROW, // the left stick (in_joy.c)
+	};
+	int key = 0;
+
+	for( int i = 0; cls.key_dest == key_menu && Cvar_VariableInteger( "ui_gamepadui" ) && !key && i < ARRAYSIZE( directions ); i++ )
+	{
+		if( Key_IsDown( directions[i] ))
+			key = directions[i];
+	}
+
+	if( key != key_pad.held )
+	{
+		key_pad.held = key;
+		key_pad.next = host.realtime + PAD_REPEAT_DELAY;
+	}
+	else if( key && host.realtime >= key_pad.next )
+	{
+		Key_Event( key, true );
+		key_pad.next = host.realtime + PAD_REPEAT_STEP;
+	}
+
+	if( key_pad.start_time != 0.0 && !key_pad.start_saved && host.realtime - key_pad.start_time >= PAD_QUICKSAVE_HOLD )
+	{
+		key_pad.start_saved = true;
+		Cbuf_AddText( "echo Quicksaving...; wait; save quick\n" ); // Valve's F6
+	}
+}
+
+/*
+===================
 Key_Unbindall_f
 ===================
 */
@@ -554,6 +674,30 @@ qboolean Cmd_GetKeysList( const char *s, char *completedname, int length, qboole
 ==============================================================================
 */
 /*
+============
+Key_Event_f
+
+key_event <key> [down|up]: a key event as a pad or a keyboard sends it, for scripted menu checks
+(tools/menutest). Without down or up the key is pressed and released.
+============
+*/
+static void Key_Event_f( void )
+{
+	const int key = Key_StringToKeynum( Cmd_Argv( 1 ));
+
+	if( Cmd_Argc() < 2 || key < 0 )
+	{
+		Con_Printf( S_USAGE "key_event <key> [down|up]\n" );
+		return;
+	}
+
+	if( Q_stricmp( Cmd_Argv( 2 ), "up" ))
+		Key_Event( key, true );
+	if( Q_stricmp( Cmd_Argv( 2 ), "down" ))
+		Key_Event( key, false );
+}
+
+/*
 ===================
 Key_Init
 ===================
@@ -573,6 +717,9 @@ void Key_Init( void )
 		Key_SetBinding( keynames[i].keynum, keynames[i].binding );
 
 	Cvar_RegisterVariable( &key_rotate );
+	Cvar_RegisterVariable( &pad_layout );
+	if( host_developer.value >= DEV_EXTENDED )
+		Cmd_AddRestrictedCommand( "key_event", Key_Event_f, "press a key as a pad or a keyboard would (scripted menu checks)" );
 
 }
 
@@ -699,6 +846,9 @@ void GAME_EXPORT Key_Event( int key, int down )
 	key = Key_Rotate( key );
 
 	if( OSK_KeyEvent( key, down ) )
+		return;
+
+	if( key == K_START_BUTTON && !key_pad.replay && Key_PadStart( down ))
 		return;
 
 	// key was pressed before engine was run

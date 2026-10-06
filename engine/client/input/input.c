@@ -673,4 +673,6 @@ void Host_InputFrame( void )
 	IN_Commands();
 
 	IN_MouseMove();
+
+	Key_PadFrame();
 }

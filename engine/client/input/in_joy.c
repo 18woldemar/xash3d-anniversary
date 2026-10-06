@@ -66,8 +66,10 @@ static struct joy_touchpad_s
 
 static qboolean joy_initialized;
 
-static CVAR_DEFINE_AUTO( joy_pitch,   "100.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick pitch sensitivity" );
-static CVAR_DEFINE_AUTO( joy_yaw,     "100.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick yaw sensitivity" );
+static CVAR_DEFINE_AUTO( joy_pitch,   DEFAULT_JOY_PITCH, FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick pitch sensitivity" );
+static CVAR_DEFINE_AUTO( joy_yaw,     DEFAULT_JOY_YAW, FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick look sensitivity, in degrees per second at full deflection" );
+static CVAR_DEFINE_AUTO( joy_look_curve, DEFAULT_JOY_LOOK_CURVE, FCVAR_ARCHIVE | FCVAR_FILTERABLE, "how the look speed follows the stick: 1 is straight, 2 squares it for a finer aim near the centre" );
+static CVAR_DEFINE_AUTO( joy_look_deadzone, DEFAULT_JOY_LOOK_DEADZONE, FCVAR_ARCHIVE | FCVAR_FILTERABLE, "round deadzone of the look stick, 0.0 to 0.9 of its travel; 0 leaves the per-axis one alone" );
 static CVAR_DEFINE_AUTO( joy_side,    "1.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick side sensitivity. Values from -1.0 to 1.0" );
 static CVAR_DEFINE_AUTO( joy_forward, "1.0", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "joystick forward sensitivity. Values from -1.0 to 1.0" );
 static CVAR_DEFINE_AUTO( joy_lt_threshold, "16384", FCVAR_ARCHIVE | FCVAR_FILTERABLE, "left trigger threshold. Value from 0 to 32767");
@@ -244,17 +246,13 @@ static int Joy_GetHatValueForAxis( const engineAxis_t engineAxis )
 		return 0;
 	}
 
-	// similar code in Joy_ProcessTrigger
-	if( joyaxis[engineAxis].val > threshold &&
-		joyaxis[engineAxis].prevval <= threshold ) // ignore random press
-	{
+	// held past the threshold is held: Joy_HatMotionEvent sends only the press and release edges. Reporting
+	// just the crossing let the arrow go up at the next small move of a stick still held over, and moving
+	// the other axis released it
+	if( joyaxis[engineAxis].val > threshold )
 		return positive;
-	}
-	if( joyaxis[engineAxis].val < -threshold &&
-		joyaxis[engineAxis].prevval >= -threshold ) // we're unpressing (inverted)
-	{
+	if( joyaxis[engineAxis].val < -threshold )
 		return negative;
-	}
 	return 0;
 }
 
@@ -473,6 +471,46 @@ static void Joy_TouchpadMove( float *fw, float *side, float *dpitch, float *dyaw
 
 /*
 =============
+Joy_LookCurve
+
+Shapes the look stick for aiming with a thumb. The deadzone is round rather than per-axis, so that a stick
+resting off-centre does not creep and a diagonal is not cut into steps, and what is left of the travel is
+stretched back over the whole range, so the slowest turn the player can ask for is as slow as wanted
+instead of jumping to a fifth of full speed at the edge of the deadzone. The speed then follows a power of
+the deflection: with joy_look_curve 2 half a stick turns at a quarter speed, which is the fine aim a linear
+stick has nowhere to put.
+
+Both axes come from the raw values, since the per-axis deadzone of Joy_ProcessStick has already zeroed the
+ones it owns and a round deadzone has to measure the pair together.
+=============
+*/
+static void Joy_LookCurve( float *yaw, float *pitch )
+{
+	float x, y, len, dead, scale;
+
+	if( joy_look_deadzone.value <= 0.0f && joy_look_curve.value == 1.0f )
+		return; // a straight stick: through unchanged
+
+	x = (float)joyaxis[JOY_AXIS_YAW].rawval / (float)SHRT_MAX;
+	y = (float)joyaxis[JOY_AXIS_PITCH].rawval / (float)SHRT_MAX;
+	len = sqrt( x * x + y * y );
+	dead = bound( 0.0f, joy_look_deadzone.value, 0.9f );
+
+	if( len <= dead )
+	{
+		*yaw = *pitch = 0.0f;
+		return;
+	}
+
+	scale = Q_min(( len - dead ) / ( 1.0f - dead ), 1.0f );
+	scale = pow( scale, bound( 1.0f, joy_look_curve.value, 4.0f )) / len;
+
+	*yaw = x * scale;
+	*pitch = y * scale;
+}
+
+/*
+=============
 Joy_FinalizeMove
 
 Append movement from axis. Called everyframe
@@ -508,8 +546,15 @@ void Joy_FinalizeMove( float *fw, float *side, float *dpitch, float *dyaw )
 
 	*fw     -= joy_forward.value * (float)joyaxis[JOY_AXIS_FWD ].val/(float)SHRT_MAX;  // must be form -1.0 to 1.0
 	*side   += joy_side.value    * (float)joyaxis[JOY_AXIS_SIDE].val/(float)SHRT_MAX;
-	*dpitch += joy_pitch.value * (float)joyaxis[JOY_AXIS_PITCH].val/(float)SHRT_MAX * host.realframetime;
-	*dyaw   -= joy_yaw.value   * (float)joyaxis[JOY_AXIS_YAW  ].val/(float)SHRT_MAX * host.realframetime;
+	{
+		float yaw = (float)joyaxis[JOY_AXIS_YAW].val / (float)SHRT_MAX;
+		float pitch = (float)joyaxis[JOY_AXIS_PITCH].val / (float)SHRT_MAX;
+
+		Joy_LookCurve( &yaw, &pitch );
+
+		*dpitch += joy_pitch.value * pitch * host.realframetime;
+		*dyaw   -= joy_yaw.value   * yaw   * host.realframetime;
+	}
 
 	if( joy_gyro_enable.value && joy_have_gyro.value && (int)joy_calibrated.value == JOY_CALIBRATED )
 	{
@@ -802,6 +847,8 @@ void Joy_Init( void )
 
 	Cvar_RegisterVariable( &joy_pitch );
 	Cvar_RegisterVariable( &joy_yaw );
+	Cvar_RegisterVariable( &joy_look_curve );
+	Cvar_RegisterVariable( &joy_look_deadzone );
 	Cvar_RegisterVariable( &joy_side );
 	Cvar_RegisterVariable( &joy_forward );
 
@@ -870,3 +917,54 @@ void Joy_Shutdown( void )
 {
 	Platform_JoyShutdown();
 }
+
+#if XASH_ENGINE_TESTS
+#include "tests.h"
+
+static void Test_JoyLookCurveOne( float x, float y, float curve, float dead, float *outx, float *outy )
+{
+	joyaxis[JOY_AXIS_YAW].rawval = (short)( x * SHRT_MAX );
+	joyaxis[JOY_AXIS_PITCH].rawval = (short)( y * SHRT_MAX );
+	Cvar_DirectSet( &joy_look_curve, va( "%f", curve ));
+	Cvar_DirectSet( &joy_look_deadzone, va( "%f", dead ));
+
+	*outx = *outy = 0.0f;
+	Joy_LookCurve( outx, outy );
+}
+
+static void Test_JoyLookCurve( void )
+{
+	float x, y;
+
+	// inside the round deadzone nothing moves, and that holds for a diagonal whose axes are each under it
+	Test_JoyLookCurveOne( 0.15f, 0.0f, 2.0f, 0.22f, &x, &y );
+	TASSERT( x == 0.0f && y == 0.0f );
+	Test_JoyLookCurveOne( 0.15f, 0.15f, 2.0f, 0.22f, &x, &y );
+	TASSERT( x == 0.0f && y == 0.0f );
+
+	// a full stick reaches full speed whatever the curve, or the sensitivity would no longer mean what it says
+	Test_JoyLookCurveOne( 1.0f, 0.0f, 2.0f, 0.22f, &x, &y );
+	TASSERT( fabs( x - 1.0f ) < 0.001f && y == 0.0f );
+
+	// halfway through what is left of the travel the square curve gives a quarter of the speed
+	Test_JoyLookCurveOne( 0.22f + ( 1.0f - 0.22f ) * 0.5f, 0.0f, 2.0f, 0.22f, &x, &y );
+	TASSERT( fabs( x - 0.25f ) < 0.001f );
+
+	// a diagonal keeps its direction: both axes carry the same share of it
+	Test_JoyLookCurveOne( 0.7f, 0.7f, 2.0f, 0.22f, &x, &y );
+	TASSERT( fabs( x - y ) < 0.001f && x > 0.0f );
+
+	// a curve of one and no round deadzone leave the values the caller came with
+	x = 0.4f; y = -0.3f;
+	joyaxis[JOY_AXIS_YAW].rawval = joyaxis[JOY_AXIS_PITCH].rawval = 0;
+	Cvar_DirectSet( &joy_look_curve, "1.0" );
+	Cvar_DirectSet( &joy_look_deadzone, "0.0" );
+	Joy_LookCurve( &x, &y );
+	TASSERT( x == 0.4f && y == -0.3f );
+}
+
+void Test_RunJoyLook( void )
+{
+	TRUN( Test_JoyLookCurve() );
+}
+#endif /* XASH_ENGINE_TESTS */

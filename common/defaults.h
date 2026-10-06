@@ -165,9 +165,29 @@ Default build-depended cvar and constant values
 	#define DEFAULT_M_IGNORE "0"
 #endif // DEFAULT_M_IGNORE
 
+// The look is shaped for a stick rather than a mouse, as Half-Life's 25th anniversary pad layout and Valve's
+// console games have it: a round deadzone, a speed growing with the square of the deflection, so that a small
+// push turns slowly and a full one turns as fast as a console shooter does, and a pitch at three quarters of
+// the yaw. The per-axis deadzone is the size XInput asks for (7849 left, 8689 right).
 #ifndef DEFAULT_JOY_DEADZONE
-	#define DEFAULT_JOY_DEADZONE "4096"
+	#define DEFAULT_JOY_DEADZONE "8000"
 #endif // DEFAULT_JOY_DEADZONE
+
+#ifndef DEFAULT_JOY_YAW
+	#define DEFAULT_JOY_YAW "220.0"
+#endif // DEFAULT_JOY_YAW
+
+#ifndef DEFAULT_JOY_PITCH
+	#define DEFAULT_JOY_PITCH "165.0"
+#endif // DEFAULT_JOY_PITCH
+
+#ifndef DEFAULT_JOY_LOOK_CURVE
+	#define DEFAULT_JOY_LOOK_CURVE "2.0"
+#endif // DEFAULT_JOY_LOOK_CURVE
+
+#ifndef DEFAULT_JOY_LOOK_DEADZONE
+	#define DEFAULT_JOY_LOOK_DEADZONE "0.22"
+#endif // DEFAULT_JOY_LOOK_DEADZONE
 
 #ifndef DEFAULT_DEV
 	#define DEFAULT_DEV 0
