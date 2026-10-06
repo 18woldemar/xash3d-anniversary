@@ -153,6 +153,8 @@
 "Look\nClick: flashlight"				"Обзор\nНажатие: фонарик"
 "Choose weapon\nLeft: crowbar\nRight: last weapon"	"Выбор оружия\nВлево: монтировка\nВправо: последнее"
 "Menu\nHold: quicksave"					"Меню\nУдерживать: быстрое сохранение"
+"Banner_head_inetgames"				"Игры в Интернете"
+"Banner_head_lan"					"Игра по локальной сети"
 "Banner_head_advanced"					"Доп. управление"
 "Banner_head_advoptions"				"Дополнительно"
 "Banner_head_audio"					"Звук"

@@ -62,6 +62,11 @@ BANNERS = {
 	'head_saveload': 'Save/load game',
 	'head_video': 'Video',
 	'head_vidoptions': 'Video',	# the gamepad menu opens it from the Video button
+	'head_multi': 'GameUI_Multiplayer',		# Valve's tokens: their own word in every language
+	'head_creategame': 'GameUI_GameMenu_CreateServer',
+	'head_customize': 'GameUI_GameMenu_Customize',
+	'head_inetgames': 'Internet games',
+	'head_lan': 'LAN game',
 }
 
 # The Controller page's picture (mainui menus/Controller.cpp draws it at 72,225, 912x331 virtual = 855x310 at
@@ -321,7 +326,7 @@ def install(language, dir, ours):
 	english = valve_tokens('english')
 	def say(key):					# a token, or the English text that is its own key
 		return tokens.get(key) or english.get(key) or key
-	write_banners(os.path.join(dir, 'gfx', 'shell'), { n: ours.get('Banner_' + n, BANNERS[n]) for n in BANNERS })
+	write_banners(os.path.join(dir, 'gfx', 'shell'), { n: ours.get('Banner_' + n) or say(BANNERS[n]) for n in BANNERS })
 	write_buttons(os.path.join(dir, 'gfx', 'shell', 'btns_main.bmp'),
 		{ i: say(key) for i, key in BUTTONS.items() }, valve_buttons)
 	write_tga(controller_diagram(say), os.path.join(dir, 'gfx', 'shell', 'controller.tga'))
