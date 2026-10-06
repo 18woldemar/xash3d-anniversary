@@ -537,8 +537,13 @@ qboolean Image_SavePNG( const char *name, rgbdata_t *pix )
 
 	uint rowsize = pix->width * pixel_size;
 
+	// an alpha byte only where the image has one: 32-bit pixels with IMAGE_HAS_ALPHA. The size, the pixel
+	// loop and the colour type each used to test the flag alone, so a 24-bit image with it read a byte past
+	// every pixel, and a 32-bit one without it compressed a tail the loop never wrote
+	const qboolean alpha = pixel_size == 4 && FBitSet( pix->flags, IMAGE_HAS_ALPHA );
+
 	// get filtered image size
-	uint filtered_size = ( rowsize + 1 ) * pix->height;
+	uint filtered_size = ( pix->width * ( alpha ? 4 : 3 ) + 1 ) * pix->height;
 
 	byte *filtered_buffer;
 	out = filtered_buffer = Mem_Malloc( host.imagepool, filtered_size );
@@ -555,7 +560,7 @@ qboolean Image_SavePNG( const char *name, rgbdata_t *pix )
 			*out++ = in[1];
 			*out++ = be ? in[0] : in[2];
 
-			if( pix->flags & IMAGE_HAS_ALPHA )
+			if( alpha )
 				*out++ = in[3];
 		}
 	}
@@ -592,7 +597,7 @@ qboolean Image_SavePNG( const char *name, rgbdata_t *pix )
 	png_hdr.ihdr_chunk.bitdepth = 8;
 
 	// write image colortype
-	png_hdr.ihdr_chunk.colortype = ( pix->flags & IMAGE_HAS_ALPHA ) ? PNG_CT_RGBA : PNG_CT_RGB; // 8 bits of alpha
+	png_hdr.ihdr_chunk.colortype = alpha ? PNG_CT_RGBA : PNG_CT_RGB; // 8 bits of alpha
 
 	// write image comression method
 	png_hdr.ihdr_chunk.compression = 0;
