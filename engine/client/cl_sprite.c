@@ -218,7 +218,7 @@ static const byte *Mod_SpriteLoadGroup( model_t *mod, const void *pin, mspritefr
 
 	for( int i = 0; i < numframes; i++ )
 	{
-		*poutintervals = pin_intervals->interval;
+		memcpy( poutintervals, &pin_intervals->interval, sizeof( *poutintervals )); // sprite data is not aligned
 		if( *poutintervals <= 0.0f )
 			*poutintervals = 1.0f; // set error value
 		poutintervals++;
