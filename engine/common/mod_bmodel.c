@@ -3140,11 +3140,18 @@ Mod_LoadTextures
 static void Mod_LoadTextures( model_t *mod, dbspmodel_t *bmod )
 {
 #if !XASH_DEDICATED
-	// release old sky layers first
+	// Release old sky layers first. R_GetBuiltinTexture loads by name, so on a map whose sky is not the
+	// two-layer kind - which is most of them - it asked the filesystem for images that do not exist, and
+	// the search walks every package and every extension, with a warning, at every level
+	// change. Only free what is already there.
 	if( !Host_IsDedicated() && bmod->isworld )
 	{
-		ref.dllFuncs.GL_FreeTexture( R_GetBuiltinTexture( "alpha_sky" ));
-		ref.dllFuncs.GL_FreeTexture( R_GetBuiltinTexture( "solid_sky" ));
+		int texnum = ref.dllFuncs.GL_FindTexture( "alpha_sky" );
+
+		if( texnum ) ref.dllFuncs.GL_FreeTexture( texnum );
+
+		texnum = ref.dllFuncs.GL_FindTexture( "solid_sky" );
+		if( texnum ) ref.dllFuncs.GL_FreeTexture( texnum );
 	}
 #endif
 
