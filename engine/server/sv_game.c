@@ -828,7 +828,7 @@ SV_ReadEntityScript
 pfnMapIsValid use this
 ==============
 */
-static char *SV_ReadEntityScript( const char *filename, int *flags )
+static char *SV_ReadEntityScript( const char *filename, uint *flags, qboolean need_ents )
 {
 	string      bspfilename, entfilename;
 	int         lumpofs = 0, lumplen = 0;
@@ -854,6 +854,14 @@ static char *SV_ReadEntityScript( const char *filename, int *flags )
 	if( !Mod_TestBmodelLumps( f, bspfilename, buf, filelen, (host_developer.value) ? false : true, &entities ))
 	{
 		SetBits( *flags, MAP_INVALID_VERSION );
+		FS_Close( f );
+		return NULL;
+	}
+
+	// the flags are everything SV_MapIsValid wants unless it looks for a landmark, and the entity lump of a
+	// Half-Life map is tens of kilobytes: the save list read one per save
+	if( !need_ents )
+	{
 		FS_Close( f );
 		return NULL;
 	}
@@ -901,22 +909,12 @@ uint SV_MapIsValid( const char *filename, const char *landmark_name )
 	char	*pfile;
 	char	*ents;
 
-	ents = SV_ReadEntityScript( filename, &flags );
+	ents = SV_ReadEntityScript( filename, &flags, !COM_StringEmptyOrNULL( landmark_name ));
 
 	if( ents )
 	{
-		qboolean	need_landmark;
 		char	token[MAX_TOKEN];
 		string	check_name;
-
-		need_landmark = !COM_StringEmptyOrNULL( landmark_name );
-
-		if( !need_landmark )
-		{
-			Mem_Free( ents );
-
-			return flags;
-		}
 
 		pfile = ents;
 
