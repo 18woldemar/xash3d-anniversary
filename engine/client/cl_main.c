@@ -3663,6 +3663,28 @@ static void CL_ListMessages_f( void )
 
 /*
 =================
+CL_GamepadUIDefault
+
+The console menu is asked for with -gamepadui, as in Half-Life 2's 20th anniversary update, and comes by
+itself where Steam says the screen is a television or a Deck; -nogamepadui keeps the desktop one anyway.
+=================
+*/
+static qboolean CL_GamepadUIDefault( void )
+{
+	const char *env;
+
+	if( Sys_CheckParm( "-nogamepadui" ))
+		return false;
+
+	if( Sys_CheckParm( "-gamepadui" ))
+		return true;
+
+	return (( env = getenv( "SteamDeck" )) != NULL && !Q_strcmp( env, "1" )) ||
+		(( env = getenv( "SteamTenfoot" )) != NULL && !Q_strcmp( env, "1" ));
+}
+
+/*
+=================
 CL_InitLocal
 =================
 */
@@ -3755,6 +3777,7 @@ static void CL_InitLocal( void )
 	Cvar_RegisterVariable( &cl_showevents );
 	Cvar_Get( "lastdemo", "", FCVAR_ARCHIVE, "last played demo" );
 	Cvar_RegisterVariable( &ui_renderworld );
+	Cvar_Get( "ui_gamepadui", CL_GamepadUIDefault() ? "1" : "0", FCVAR_READ_ONLY, "the menu is the console one, driven by a pad (-gamepadui, -nogamepadui)" );
 	Cvar_RegisterVariable( &cl_maxframetime );
 	Cvar_RegisterVariable( &cl_fixmodelinterpolationartifacts );
 	Cvar_RegisterVariable( &cl_subtitles );
