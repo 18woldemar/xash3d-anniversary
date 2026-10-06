@@ -307,6 +307,31 @@ static uint32_t FS_PathExecFlag( const char *dir )
 
 /*
 ================
+FS_AddGameSubDirectory
+
+A game directory's companion (<dir>_hd, <dir>_<language> and the like), from the read-only data first and
+the writable root over it, as the game directory itself is mounted. Mounted from the root alone, a language
+or the HD content that lives only in the read-only data never appeared.
+================
+*/
+static void FS_AddGameSubDirectory( const char *dir, const char *suffix, uint flags )
+{
+	char buf[MAX_VA_STRING];
+
+	if( !COM_StringEmpty( fs_rodir ))
+	{
+		Q_snprintf( buf, sizeof( buf ), "%s/%s%s/", fs_rodir, dir, suffix );
+		FS_AllowDirectPaths( true );
+		FS_AddGameDirectory( buf, flags | FS_NOWRITE_PATH | FS_PathExecFlag( fs_rodir ));
+		FS_AllowDirectPaths( false );
+	}
+
+	Q_snprintf( buf, sizeof( buf ), "%s%s/", dir, suffix );
+	FS_AddGameDirectory( buf, flags );
+}
+
+/*
+================
 FS_AddGameHierarchy
 
 ================
@@ -384,27 +409,18 @@ void FS_AddGameHierarchy( const char *dir, uint flags )
 	SetBits( flags, FS_NOWRITE_PATH | FS_CUSTOM_PATH );
 
 	if( FBitSet( mount_flags, FS_MOUNT_HD ))
-	{
-		Q_snprintf( buf, sizeof( buf ), "%s_hd/", dir );
-		FS_AddGameDirectory( buf, flags );
-	}
+		FS_AddGameSubDirectory( dir, "_hd", flags );
 
 	if( FBitSet( mount_flags, FS_MOUNT_ADDON ))
-	{
-		Q_snprintf( buf, sizeof( buf ), "%s_addon/", dir );
-		FS_AddGameDirectory( buf, flags );
-	}
+		FS_AddGameSubDirectory( dir, "_addon", flags );
 
 	if( FBitSet( mount_flags, FS_MOUNT_LV ))
-	{
-		Q_snprintf( buf, sizeof( buf ), "%s_lv/", dir );
-		FS_AddGameDirectory( buf, flags );
-	}
+		FS_AddGameSubDirectory( dir, "_lv", flags );
 
 	if( FBitSet( mount_flags, FS_MOUNT_L10N ))
 	{
-		Q_snprintf( buf, sizeof( buf ), "%s_%s/", dir, fs_language );
-		FS_AddGameDirectory( buf, flags );
+		Q_snprintf( buf, sizeof( buf ), "_%s", fs_language );
+		FS_AddGameSubDirectory( dir, buf, flags );
 	}
 
 	if( is_game_dir )
