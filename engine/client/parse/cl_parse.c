@@ -481,6 +481,12 @@ int CL_EstimateNeededResources( void )
 {
 	int nTotalSize = 0;
 
+	// A local game transfers nothing: every resource it names is already here. The estimate costs a probe
+	// of the download cache per resource, and that probe is a direct path, so it is a real file open the
+	// filesystem cannot answer from a package directory - hundreds of them at every level load.
+	if( Host_IsLocalClient( ))
+		return 0;
+
 	for( resource_t *p = cl.resourcesneeded.pNext; p != &cl.resourcesneeded; p = p->pNext )
 	{
 		char filepath[MAX_QPATH];
