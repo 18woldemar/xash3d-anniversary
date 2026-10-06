@@ -146,3 +146,15 @@ for language, source in SOURCES.items():
 	if not os.path.exists( path ):
 		sys.exit( f'{path}: not there. Clone Fograin/hl-subs-mod and name its checkout on the command line.' )
 	write( language, path, alias )
+
+# Russian captions are cp1251 and the HUD font of the 25th anniversary data (gfx.wad's CREDITSFONT) has no
+# Cyrillic, so the Russian directory gets the cp1251 credits font of extras.pk3 as gfx/creditsfont.fnt, which
+# the engine reads over the WAD lump. It draws the guillemets the mod's Russian text uses too.
+import zipfile
+extras = os.path.join( run, 'valve', 'extras.pk3' )
+if os.path.exists( extras ) and 'valve_russian' in SOURCES:
+	dst = os.path.join( run, 'valve_russian', 'gfx', 'creditsfont.fnt' )
+	os.makedirs( os.path.dirname( dst ), exist_ok = True )
+	with zipfile.ZipFile( extras ) as z, open( dst, 'wb' ) as f:
+		f.write( z.read( 'creditsfont_cp1251.fnt' ))
+	print( f'{dst}: the cp1251 credits font of extras.pk3' )
