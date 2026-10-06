@@ -1006,8 +1006,15 @@ void CL_ParseClientData( sizebuf_t *msg, connprotocol_t proto )
 	// did we drop some frames?
 	if( i > cl.last_incoming_sequence + 1 )
 	{
+		// A level change clears cl, so last_incoming_sequence starts at zero again, while the sequence
+		// itself lives in cls.netchan and counts on for the whole session. The first packet of the new
+		// level then walked every number from one, tens of millions of times around a window of
+		// CL_UPDATE_BACKUP frames - a cost that grows with how long the game has run, up to seconds an
+		// hour in. Only the window can hold a dropped frame anyway.
+		int first = Q_max( cl.last_incoming_sequence + 1, i - CL_UPDATE_BACKUP );
+
 		// mark as dropped
-		for( j = cl.last_incoming_sequence + 1; j < i; j++ )
+		for( j = first; j < i; j++ )
 		{
 			if( cl.frames[j & CL_UPDATE_MASK].receivedtime >= 0.0 )
 			{
