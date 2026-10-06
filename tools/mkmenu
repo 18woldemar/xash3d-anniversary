@@ -1,0 +1,369 @@
+#!/usr/bin/env python3
+# The gamepad menu's own layer: page banners (gfx/shell/head_*) in the 1998 Half-Life style at the size a 720p
+# screen draws them, the button atlas, the pad legend's icons, the Controller page's picture, and our menu string
+# files, for English and every language we translate.
+# Valve's banners are 460x80 bitmaps stretched to 690x120 on a 720p screen, which is why their letters look soft;
+# these are rendered at that size. The glow recipe: draw the text 4x oversized, scale it down with Lanczos, blur
+# it, then map the coverage through the fire ramp (dark red -> orange -> yellow -> white core), with the gain
+# fitted so the same share of the letters burns white as in Valve's banners.
+# The font is Trebuchet MS Bold (Microsoft, not redistributable), so it is read from outside the repository and
+# only the rendered images are ever shipped.
+# Strings we translate ourselves live in tools/menu/localization/mainui_<language>.txt (what the game data does
+# not translate, keyed by the English text); they are installed into the run tree's valve/resource/, and their
+# Banner_* entries name the headings, so a language gets its own banners under valve_<language>/gfx/shell/,
+# which the engine reads over valve/.
+# The legend's icons are the Xbox face buttons of AL2009man/Gamepad-Asset-Pack (MIT, (c) 2024 Al. Lopez): a
+# build that ships them carries that licence. The controller is tools/menu/360_controller.svg (CC BY-SA 3.0).
+# Usage: [MKMENU_FONT=...trebucbd.ttf] [MKMENU_PADS=<Gamepad-Prompt-Asset-Pack checkout>] mkmenu [run tree]
+#        mkmenu --sheet out.png   writes a comparison sheet instead (ours under Valve's, upscaled the same way)
+# Env: MKMENU_DATA is the game data (default ~/src/xbox-dev/assets/HalfLife-Steam); MKMENU_LOADING, if set,
+# names a 1280x720 loading picture to install as gfx/shell/loading.tga. Needs Pillow and cairosvg
+# (MKMENU_CAIROSVG, default ~/.venvs/svg/bin/cairosvg).
+import io, os, re, sys, struct, subprocess
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+W, H, S = 690, 120, 4			# the banner rect at 720p, and the oversampling factor
+X, BASE = 13, 92			# left margin and baseline, so the words sit where Valve's do in the rect
+TRACK, BLUR, STROKE = 0.04, 5.5, 1	# letter spacing in em, glow radius, and the widening that gives
+					# the letters Valve's weight
+REF_TEXT, REF_WIDTH = 'Advanced controls', 634	# one size for every banner: the longest one as wide as Valve's
+SPLIT = 0.8				# coverage at which the flame turns from red-orange to yellow-white
+FIT_P, FIT_HEAT = 0.75, 0.875		# fit the gain so this percentile of the lit pixels reaches this heat
+
+# The button atlas (gfx/shell/btns_main.bmp): one 156x26 cell per button id in the order of mainui's PC_
+# enum, three states stacked - the flat gold label, the glow behind a focused one, and the focused label with
+# the letters punched out of the glow, as Valve's WON atlas has them. Ids we do not name keep Valve's cell.
+BTN_W, BTN_H = 156, 26
+BTN_SIZE, BTN_X, BTN_BASE = 15, 4, 17	# fitted to Valve's "New game": same width and the same baseline
+BTN_FLAT = (240, 180, 63)
+BUTTONS = {		# index in the PC_ enum: the string mainui labels it with
+	0: 'GameUI_NewGame', 1: 'GameUI_GameMenu_ResumeGame', 2: 'GameUI_TrainingRoom', 3: 'GameUI_Options',
+	4: 'GameUI_LoadGame', 5: 'Save\\Load Game', 7: 'GameUI_GameMenu_Quit',
+	9: 'GameUI_Easy', 10: 'GameUI_Medium', 11: 'GameUI_Hard', 12: 'GameUI_SaveGame', 13: 'GameUI_LoadGame',
+	14: 'GameUI_Cancel', 15: 'Game options', 16: 'GameUI_Video', 17: 'GameUI_Audio', 18: 'Controller',
+	19: 'Done', 21: 'GameUI_UseDefaults', 22: 'GameUI_OK', 23: 'Video options', 24: 'Video modes',
+	25: 'Adv. Controls', 27: 'Delete', 52: 'Update', 54: 'GameUI_GameMenu_Disconnect', 55: 'GameUI_Console',
+	59: 'Previews', 60: 'Adv. Options', 61: 'GameUI_ChangeGame', 62: 'Activate', 64: 'Visit web site',
+}	# 18 is PC_CONTROLS: the gamepad menu's Controller button (the Controls page is not in it)
+
+BANNERS = {
+	'head_advanced': 'Advanced controls',
+	'head_advoptions': 'Advanced options',
+	'head_audio': 'Audio',
+	'head_config': 'Configuration',
+	'head_controller': 'Controller',
+	'head_controls': 'Controls',
+	'head_custom': 'Custom game',
+	'head_gamepad': 'Gamepad',
+	'head_load': 'Load game',
+	'head_newgame': 'New game',
+	'head_save': 'Save game',
+	'head_saveload': 'Save/load game',
+	'head_video': 'Video',
+	'head_vidoptions': 'Video',	# the gamepad menu opens it from the Video button
+}
+
+# The Controller page's picture (mainui menus/Controller.cpp draws it at 72,225, 912x331 virtual = 855x310 at
+# 720p): tools/menu/360_controller.svg with Valve's 25th layout on it - the engine's default pad binds - in the
+# menu's text font (Fira Sans, mainui's stand-in for Trebuchet MS) and the WON orange.
+DIAGRAM_W, DIAGRAM_H = 855, 310
+PAD_W, PAD_H = 405, 257			# the controller, centred at the bottom
+PAD_X, PAD_Y = (DIAGRAM_W - PAD_W) // 2, DIAGRAM_H - PAD_H - 4
+LABEL_SIZE, LABEL_LINE, LABEL_GAP, LINE_GAP = 18, 21, 14, 8
+WON_ORANGE = (240, 180, 24)
+CAIROSVG = os.path.expanduser(os.environ.get('MKMENU_CAIROSVG', '~/.venvs/svg/bin/cairosvg'))
+# The drawing is the white controller; the menu shows the black one: dark body, grey edges (the drawing's black
+# under-layers, which have no fill of their own), coloured face buttons and the green guide ring as they are
+PAD_EDGE = '#6e6e6e'
+PAD_PALETTE = {
+	'#ffffff': '#262626', '#f2f2f2': '#2f2f2f', '#bfbfbf': '#3a3a3a',	# body, stick rings, top ridge
+	'#515151': '#1c1c1c', '#4a4a4a': '#181818', '#424242': '#141414',	# sticks and d-pad
+	'#898989': '#4a4a4a', '#7f7f7f': '#555555', '#808080': '#8c8c8c',	# guide centre, bumper shading, LB/RB/LT/RT
+	'#000000': PAD_EDGE,							# outlines
+}
+CONTROLLER_LAYOUT = [	# the control (0..1 of the controller), where the label goes, its top in pixels, the string
+	((0.229, 0.080), 'L', 60, 'Alt fire'),						# LT: +attack2
+	((0.237, 0.219), 'L', 95, 'Previous weapon'),					# LB: invprev; invselect
+	((0.195, 0.579), 'L', 177, 'Move\nClick: crouch'),				# left stick: toggle_duck
+	((0.353, 0.747), 'L', 226, 'Choose weapon\nLeft: crowbar\nRight: last weapon'),	# d-pad
+	((0.771, 0.080), 'R', 60, 'Fire'),						# RT: +attack
+	((0.763, 0.219), 'R', 95, 'Next weapon'),					# RB: invnext; invselect
+	((0.803, 0.403), 'R', 130, 'Reload'),						# Y
+	((0.880, 0.499), 'R', 158, 'Crouch (hold)'),					# B: +duck
+	((0.717, 0.509), 'R', 194, 'Use'),						# X
+	((0.798, 0.600), 'R', 222, 'Jump'),						# A
+	((0.636, 0.787), 'R', 246, 'Look\nClick: flashlight'),				# right stick: impulse 100
+	((0.393, 0.515), 'TL', 4, 'Flashlight\nHold: quicksave'),			# BACK
+	((0.610, 0.515), 'TR', 4, 'Menu'),						# START
+]
+
+font_path = os.environ.get('MKMENU_FONT', os.path.expanduser('~/src/xbox-dev/assets/fonts/trebucbd.ttf'))
+
+def coverage(text, size):
+	big = Image.new('L', (W * S, H * S), 0)
+	f = ImageFont.truetype(font_path, int(size * S))
+	d = ImageDraw.Draw(big)
+	x = X * S
+	for ch in text:
+		d.text((x, BASE * S), ch, font=f, fill=255, anchor='ls', stroke_width=STROKE * S, stroke_fill=255)
+		x += f.getlength(ch) + TRACK * size * S
+	return big.resize((W, H), Image.LANCZOS).filter(ImageFilter.GaussianBlur(BLUR))
+
+def ramp(split=SPLIT):
+	t = []
+	for v in range(256):
+		h = v / 255
+		if h < split:
+			r = h / split * 255
+			t.append((int(r), int(0.55 * r), 0))
+		else:
+			t.append((255, int(140 + 115 * (h - split) / (1 - split)), 0))
+	return t
+RAMP = ramp()
+
+def colorize(cov, gain):
+	out = Image.new('RGB', cov.size)
+	out.putdata([RAMP[min(255, int(v * gain))] for v in cov.getdata()])
+	return out
+
+def fit_size(text=REF_TEXT, want=REF_WIDTH):
+	lo, hi = 10.0, 140.0
+	for _ in range(25):
+		size = (lo + hi) / 2
+		b = coverage(text, size).point(lambda v: 255 if v > 40 else 0).getbbox()
+		if b[2] - b[0] > want: hi = size
+		else: lo = size
+	return (lo + hi) / 2
+
+def fit_gain(cov):
+	lo, hi = 0.3, 6.0
+	for _ in range(18):
+		gain = (lo + hi) / 2
+		lit = sorted(min(255, int(v * gain)) for v in cov.getdata() if v * gain > 40)
+		if not lit or lit[int(FIT_P * (len(lit) - 1))] / 255 < FIT_HEAT: lo = gain
+		else: hi = gain
+	return (lo + hi) / 2
+
+def banner(text, size):
+	width = text_width(text, size, TRACK) + 2 * STROKE + 2 * BLUR	# the glow reaches past the letters
+	if X + width > W - 8:				# a heading longer than the reference one is squeezed into the rect
+		size *= (W - 8 - X) / width
+	cov = coverage(text, size)
+	return colorize(cov, fit_gain(cov))
+
+def write_tga(im, path):			# uncompressed, bottom-up, as Valve's shell art is; 32-bit when it has alpha
+	w, h = im.size
+	alpha = im.mode == 'RGBA'
+	order = (2, 1, 0, 3) if alpha else (2, 1, 0)
+	rows = b''.join(bytes(bytearray([p[i] for p in im.crop((0, y, w, y + 1)).getdata() for i in order]))
+			for y in range(h - 1, -1, -1))
+	with open(path, 'wb') as f:
+		f.write(struct.pack('<BBBHHBHHHHBB', 0, 0, 2, 0, 0, 0, 0, 0, w, h, 32 if alpha else 24, 8 if alpha else 0) + rows)
+
+def btn_coverage(text, size):
+	big = Image.new('L', (BTN_W * S, BTN_H * S), 0)
+	f = ImageFont.truetype(font_path, int(size * S))
+	d = ImageDraw.Draw(big)
+	x, first = BTN_X * S, True
+	for ch in text:
+		d.text((x, BTN_BASE * S), ch, font=f, fill=255, anchor='ls')
+		adv = f.getlength(ch)
+		if first and ch != ' ':		# WON underlines the first letter, the keyboard shortcut
+			d.rectangle([x, BTN_BASE * S + 2 * S, x + adv - 1, BTN_BASE * S + 3 * S], fill=255)
+			first = False
+		x += adv
+	return big.resize((BTN_W, BTN_H), Image.LANCZOS)
+
+def btn_fire(mask, blur, gain, split = 0.30, gmax = 226):
+	lut = []
+	for v in range(256):
+		h = min(1.0, v * gain / 255)
+		if h < split:
+			r = int(h / split * 255)
+			lut.append(( r, int(0.30 * r), 0 ))
+		else:
+			t = (h - split) / (1 - split)
+			lut.append(( 255, int(60 + (gmax - 60) * t), int(30 * t) ))
+	glow = mask.filter(ImageFilter.GaussianBlur(blur))
+	out = Image.new('RGB', mask.size)
+	out.putdata([lut[v] for v in glow.getdata()])
+	return out
+
+def text_width(text, size, track = 0.0):	# measured on the font: a picture crops what does not fit
+	f = ImageFont.truetype(font_path, int(size * S))
+	return (sum(f.getlength(ch) for ch in text) + track * size * S * (len(text) - 1)) / S
+
+def button(text):
+	size = BTN_SIZE
+	width = text_width(text, size)
+	if BTN_X + width > BTN_W - 4:			# a long label is squeezed into the cell
+		size *= (BTN_W - 4 - BTN_X) / width
+	cov = btn_coverage(text, size)
+	letters = cov.point(lambda v: 255 if v > 120 else 0)
+	flat = Image.merge('RGB', tuple(cov.point(lambda v, c = c: v * c // 255) for c in BTN_FLAT))
+	focused = btn_fire(cov, 1.9, 3.4)
+	focused.paste(( 0, 0, 0 ), ( 0, 0 ), letters)	# the glow shows around the letters, not through them
+	return [ flat, btn_fire(cov, 1.6, 2.6), focused ]
+
+def write_buttons(path, labels, valve_atlas):
+	cells = valve_atlas.height // (BTN_H * 3)
+	atlas = Image.new('RGB', (BTN_W, cells * BTN_H * 3))
+	for i in range(cells):
+		if i in labels:
+			states = button(labels[i])
+		else:					# an id we do not name keeps Valve's art
+			states = [valve_atlas.crop(( 0, (i * 3 + s) * BTN_H, BTN_W, (i * 3 + s + 1) * BTN_H )) for s in range(3)]
+		for s, im in enumerate(states):
+			atlas.paste(im, ( 0, (i * 3 + s) * BTN_H ))
+	out = atlas.convert('P', palette = Image.ADAPTIVE, colors = 255)	# 8-bit, as Valve ships it
+	out = out.point(list(range(1, 256)) + [ 255 ])			# mainui fills the guard pixels between the
+	out.putpalette([ 0, 0, 0 ] + out.getpalette()[:765])		# atlas cells with index 0, so that index has
+	out.save(path)							# to be black: the buttons are drawn additively
+	print(f'  {path.replace(run, "")}: {len(labels)} of {cells} buttons')
+
+size = fit_size()
+print(f'font {font_path}, size {size:.1f} px: "{REF_TEXT}" is {REF_WIDTH} px wide, as Valve draws it')
+
+if len(sys.argv) > 2 and sys.argv[1] == '--sheet':
+	old = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'run', 'halflife', 'valve', 'extras.pk3')
+	import zipfile
+	z = zipfile.ZipFile(old)
+	rows = []
+	for name, text in BANNERS.items():
+		try:
+			import io
+			valve = Image.open(io.BytesIO(z.read(f'gfx/shell/{name}.tga'))).convert('RGB').resize((W, H), Image.BILINEAR)
+		except KeyError:
+			valve = Image.new('RGB', (W, H))
+		rows += [(f'{name}: Valve, 460x80 stretched', valve), ('ours, 690x120', banner(text, size))]
+	sh = Image.new('RGB', (W + 10, len(rows) * (H + 16)), (40, 40, 40))
+	d = ImageDraw.Draw(sh)
+	for i, (n, im) in enumerate(rows):
+		sh.paste(im, (5, i * (H + 16) + 14)); d.text((5, i * (H + 16) + 2), n, fill=(255, 255, 255))
+	sh.save(sys.argv[2])
+	print(sys.argv[2])
+	sys.exit()
+
+run = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'run', 'halflife'))
+data = os.path.expanduser(os.environ.get('MKMENU_DATA', '~/src/xbox-dev/assets/HalfLife-Steam'))
+tools = os.path.dirname(os.path.abspath(__file__))
+strings = os.path.join(tools, 'menu', 'localization')
+
+def read_tokens(path):			# Valve's files are UTF-8 or UTF-16, ours are UTF-8
+	try:
+		raw = open(path, 'rb').read()
+	except OSError:
+		return {}
+	text = raw.decode('utf-16-le') if raw[:2] == b'\xff\xfe' else raw.decode('utf-8-sig', 'replace')
+	unescape = lambda t: t.replace('\\\\', '\x00').replace('\\n', '\n').replace('\x00', '\\')	# as mainui reads them
+	return { unescape(k): unescape(v) for k, v in re.findall(r'^\s*"([^"]+)"\s+"([^"]*)"', text, re.M) }
+
+def valve_tokens(language):
+	d = os.path.join(data, 'valve' if language == 'english' else 'valve_' + language, 'resource')
+	t = read_tokens(os.path.join(d, f'gameui_{language}.txt'))
+	t.update(read_tokens(os.path.join(d, f'valve_{language}.txt')))
+	return t
+
+def write_banners(dir, texts):
+	os.makedirs(dir, exist_ok=True)
+	one = min(size, fit_size(max(texts.values(), key=len)))	# one size per language: its longest heading, as wide
+								# as Valve's, and never larger than the English set
+	for name, text in texts.items():
+		write_tga(banner(text, one), os.path.join(dir, name + '.tga'))
+	print(f'  {dir.replace(run, "")}: {len(texts)} banners at {one:.1f} px')
+
+def controller_diagram(say):
+	'''The Controller page's picture for one language: the drawing in black, a leader line from each control to its
+	label, the labels. Left labels end at the controller's left, right ones start at its right, the two
+	centre buttons label upwards.'''
+	svg = open(os.path.join(art, '360_controller.svg')).read()
+	for white, black in PAD_PALETTE.items():
+		svg = re.sub(re.escape(white), black, svg, flags=re.I)
+	svg = svg.replace('style="overflow:visible"', f'style="overflow:visible;fill:{PAD_EDGE}"', 1)	# the unfilled shapes
+	png = subprocess.run([CAIROSVG, '-', '-f', 'png', '-o', '-', '--output-width', str(PAD_W), '--output-height', str(PAD_H)],
+		input=svg.encode(), check=True, capture_output=True).stdout
+	im = Image.new('RGBA', (DIAGRAM_W, DIAGRAM_H), (0, 0, 0, 0))
+	im.alpha_composite(Image.open(io.BytesIO(png)).convert('RGBA'), (PAD_X, PAD_Y))
+	lines = Image.new('L', (DIAGRAM_W * S, DIAGRAM_H * S))		# drawn 4x oversized for smooth edges
+	d = ImageDraw.Draw(lines)
+	font = ImageFont.truetype(io.BytesIO(label_font), LABEL_SIZE)
+	labels = []
+	for (fx, fy), side, top, key in CONTROLLER_LAYOUT:
+		text = say(key).split('\n')
+		cx, cy = PAD_X + fx * PAD_W, PAD_Y + fy * PAD_H
+		mid = top + len(text) * LABEL_LINE / 2
+		if side == 'L':
+			edge, end = PAD_X - LABEL_GAP, (PAD_X - LINE_GAP, mid)
+		elif side == 'R':
+			edge, end = PAD_X + PAD_W + LABEL_GAP, (PAD_X + PAD_W + LINE_GAP, mid)
+		elif side == 'TL':
+			edge, end = cx - 20, (cx - 18, top + len(text) * LABEL_LINE)
+		else:
+			edge, end = cx + 20, (cx + 18, top + len(text) * LABEL_LINE)
+		d.line([(cx * S, cy * S), (end[0] * S, end[1] * S)], fill=255, width=2 * S)
+		d.ellipse([(cx - 3) * S, (cy - 3) * S, (cx + 3) * S, (cy + 3) * S], fill=255)
+		labels.append((edge, top, text, side in ('L', 'TL')))
+	mask = lines.resize((DIAGRAM_W, DIAGRAM_H), Image.LANCZOS)
+	im.alpha_composite(Image.merge('RGBA', [Image.new('L', mask.size, c) for c in WON_ORANGE] + [mask]))
+	d = ImageDraw.Draw(im)
+	for edge, top, text, right_aligned in labels:
+		for i, line in enumerate(text):
+			x = edge - font.getlength(line) if right_aligned else edge
+			if x < 0 or x + font.getlength(line) > DIAGRAM_W:
+				print(f'  controller picture: "{line}" runs off the edge, shorten it')
+			d.text((x, top + i * LABEL_LINE), line, font=font, fill=WON_ORANGE + (255,))
+	return im
+
+def install(language, dir, ours):
+	tokens = valve_tokens(language)
+	tokens.update(ours)				# ours wins: it is what the data leaves untranslated
+	english = valve_tokens('english')
+	def say(key):					# a token, or the English text that is its own key
+		return tokens.get(key) or english.get(key) or key
+	write_banners(os.path.join(dir, 'gfx', 'shell'), { n: ours.get('Banner_' + n, BANNERS[n]) for n in BANNERS })
+	write_buttons(os.path.join(dir, 'gfx', 'shell', 'btns_main.bmp'),
+		{ i: say(key) for i, key in BUTTONS.items() }, valve_buttons)
+	write_tga(controller_diagram(say), os.path.join(dir, 'gfx', 'shell', 'controller.tga'))
+
+art = os.path.join(tools, 'menu')
+shell = os.path.join(run, 'valve', 'gfx', 'shell')
+os.makedirs(shell, exist_ok=True)
+
+# The legend's icons: the Xbox face buttons, which a Steam Deck and every XInput pad share
+pads = os.path.expanduser(os.environ.get('MKMENU_PADS', '/tmp/gpack/Gamepad-Asset-Pack/Gamepad-Prompt-Asset-Pack'))
+for name, face in (('pad_a', 'A'), ('pad_b', 'B'), ('pad_x', 'X'), ('pad_y', 'Y')):
+	svg = os.path.join(pads, 'Shared', f'shared-{face}-Color.svg')
+	if not os.path.exists(svg):
+		sys.exit(f'mkmenu: {svg} is missing - clone AL2009man/Gamepad-Asset-Pack with its submodules, set MKMENU_PADS')
+	png = subprocess.run([CAIROSVG, svg, '-f', 'png', '-o', '-', '--output-width', '64', '--output-height', '64'],
+		check=True, capture_output=True).stdout
+	write_tga(Image.open(io.BytesIO(png)).convert('RGBA'), os.path.join(shell, name + '.tga'))
+print('  valve/gfx/shell: pad_a, pad_b, pad_x, pad_y')
+
+# The loading screen, when a widened picture is at hand: the engine draws a wide one 1:1 instead of stretching
+# the 1998 320x200 art to 4:3. The picture is derived from Valve's, so it stays outside the repository.
+loading = os.environ.get('MKMENU_LOADING')
+if loading:
+	write_tga(Image.open(loading).convert('RGB'), os.path.join(shell, 'loading.tga'))
+	print('  valve/gfx/shell: loading')
+
+import zipfile
+with zipfile.ZipFile(os.path.join(run, 'valve', 'extras.pk3')) as z:	# Valve's atlas: the art of the ids we do not name
+	valve_buttons = Image.open(io.BytesIO(z.read('gfx/shell/btns_main.bmp'))).convert('RGB')
+	label_font = z.read('gfx/fonts/FiraSans-Regular.ttf')	# the font mainui draws menu text with here
+
+resource = os.path.join(run, 'valve', 'resource')
+os.makedirs(resource, exist_ok=True)
+for f in sorted(os.listdir(strings)):
+	language = f[len('mainui_'):-len('.txt')]
+	if language != 'english' and not os.path.isdir(os.path.join(data, 'valve_' + language)):
+		if os.path.exists(os.path.join(resource, f)):
+			os.remove(os.path.join(resource, f))
+		print(f'  {f}: the game data has no {language}, skipped')	# half a translation is worse than none
+		continue
+	text = open(os.path.join(strings, f), encoding='utf-8').read()
+	open(os.path.join(resource, f), 'w', encoding='utf-8').write(text)
+	ours = read_tokens(os.path.join(strings, f))
+	print(f'  valve/resource/{f}: {len(ours)} strings')
+	# English art belongs to the game directory, a language's to its own, which the engine reads over it
+	install(language, os.path.join(run, 'valve' if language == 'english' else 'valve_' + language), ours)

@@ -2,7 +2,8 @@
 # Rebuild engine and game code from the working trees, install into the run tree, run.
 # Usage: run [build|run|both] [engine args...]   Default: both, running +map c1a0 for RUN_TIMEOUT (60) s.
 # Data stays read-only through XASH3D_RODIR; the run tree holds only binaries and what the engine writes.
-# RUN_DATA is the data directory (default ~/src/xbox-dev/assets/HalfLife), RUN_DIR the run tree.
+# RUN_DATA is the data directory (default ~/src/xbox-dev/assets/HalfLife-Steam: Steam build 15961492, the
+# 25th anniversary data in every language this project ships), RUN_DIR the run tree.
 # The trees sit side by side in the workspace; build output, prefix and run tree go to the workspace too.
 # Needs a one-time configure with --prefix=/ (waf joins --destdir and the prefix), in both checkouts:
 #   ./waf configure -T release -8 -o <workspace>/build/<tree> --prefix=/
@@ -26,7 +27,7 @@ fi
 cd "$run"
 rm -f engine.log
 # Xash exits by itself only on errors; a normal run ends by the timeout.
-DISPLAY=${DISPLAY_RUN:-:1} XASH3D_RODIR=${RUN_DATA:-$HOME/src/xbox-dev/assets/HalfLife} LD_LIBRARY_PATH=. \
+DISPLAY=${DISPLAY_RUN:-:1} XASH3D_RODIR=${RUN_DATA:-$HOME/src/xbox-dev/assets/HalfLife-Steam} LD_LIBRARY_PATH=. \
   timeout -s KILL ${RUN_TIMEOUT:-60} \
   ./xash3d -game valve -dev 2 -log -windowed -width 1280 -height 720 ${@:-+map c1a0} > /dev/null 2>&1 || true
 tail -20 engine.log
