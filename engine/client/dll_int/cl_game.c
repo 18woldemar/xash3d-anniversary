@@ -907,9 +907,16 @@ void CL_DrawHUD( int state )
 	case CL_ACTIVE:
 		if( !cl.intermission )
 			CL_DrawScreenFade ();
-		CL_DrawCrosshair ();
-		CL_DrawCenterPrint ();
-		clgame.dllFuncs.pfnRedraw( cl.time, cl.intermission );
+
+		// Half-Life ends on a HudText of "END3" rather than END_SECTION, so the credits roll without an
+		// intermission and the client kept drawing health and ammo over them. The roll is the picture.
+		if( !UI_CreditsActive( ))
+		{
+			CL_DrawCrosshair ();
+			CL_DrawCenterPrint ();
+			clgame.dllFuncs.pfnRedraw( cl.time, cl.intermission );
+		}
+
 		if( cl.intermission ) CL_DrawScreenFade ();
 		break;
 	case CL_PAUSED:
