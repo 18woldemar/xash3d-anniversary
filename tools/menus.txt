@@ -1,0 +1,33 @@
+// The menu pages, out of a game, then over c1a0 with a game running. Run with menushots.
+fps_max 60
+wait 200
+echo MENUSHOT main
+wait 90
+menu_options
+wait 60
+echo MENUSHOT configuration
+wait 90
+menu_audio
+wait 60
+echo MENUSHOT audio
+wait 90
+menu_vidoptions
+wait 60
+echo MENUSHOT video
+wait 90
+menu_loadgame
+wait 60
+echo MENUSHOT loadgame
+wait 90
+map c1a0
+wait 400
+togglemenu
+wait 90
+echo MENUSHOT main_ingame
+wait 90
+menu_savegame
+wait 60
+echo MENUSHOT savegame
+wait 90
+wait 30
+quit

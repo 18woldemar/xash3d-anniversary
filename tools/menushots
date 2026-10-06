@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Scripted menu shots: runs a console script through the engine's script command (one line per frame,
+# "wait <frames>" between) and grabs the window each time the log says "MENUSHOT <name>", into
+# <workspace>/shots/<set>/<name>.png. The script ends the run with quit.
+# Usage: menushots <set> <script> [seconds] [engine args...]   (default 120 s)
+# The script is copied into the run tree's valve/; RUN_DIR picks another run tree. Compare sets with cmpshots.
+set -uo pipefail
+[ $# -ge 2 ] || { sed -n '2,7p' "$0" >&2; exit 2; }
+tools=$(dirname "$(readlink -f "$0")")
+top=$(readlink -f "$tools/../..")
+out=$top/shots/$1
+script=$2
+limit=${3:-120}
+shift 3 2> /dev/null || shift $#
+run=${RUN_DIR:-$top/run/halflife}
+log=$run/engine.log
+crop=1280x720+320+180 # the 1280x720 window sits centred on the 1920x1080 headless screen
+mkdir -p "$out" "$run/valve"
+rm -f "$out"/*.png
+cp "$script" "$run/valve/menushots.txt"
+rm -f "$log"
+RUN_TIMEOUT=$limit "$tools/run" run "$@" +script menushots.txt > /tmp/menushots-run.out 2>&1 &
+runner=$!
+
+taken=0
+while kill -0 $runner 2> /dev/null; do
+  sleep 0.25
+  name=$(grep -a "MENUSHOT " "$log" 2> /dev/null | sed -n "$((taken + 1))p" | awk '{print $NF}')
+  [ -n "$name" ] || continue
+  sleep 0.5
+  DISPLAY=${DISPLAY_RUN:-:1} import -window root png:- | convert - -crop "$crop" +repage "$out/$name.png"
+  taken=$((taken + 1))
+done
+wait $runner 2> /dev/null
+echo "menushots: $taken shots in $out"
+[ "$taken" -gt 0 ]
