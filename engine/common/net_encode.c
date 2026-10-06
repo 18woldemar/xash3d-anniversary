@@ -336,6 +336,9 @@ typedef struct delta_test_struct_t
 	uint16_t dt_short_unsigned;
 	int8_t   dt_byte_signed;
 	uint8_t  dt_byte_unsigned;
+	int16_t  dt_short_as_integer; // delta.lst types can be wider than the field: custom_entity_state_t skin
+	int16_t  dt_short_neighbour;  // not in the delta
+	uint8_t  dt_byte_as_integer;  // entity_state_t eflags
 	int32_t  dt_integer_signed_mul;
 	int16_t  dt_short_signed_mul;
 	int8_t   dt_byte_signed_mul;
@@ -354,6 +357,9 @@ static const delta_field_t test_fields[] =
 { TEST_DEF( dt_integer_signed ) },
 { TEST_DEF( dt_integer_unsigned ) },
 { TEST_DEF( dt_short_signed ) },
+{ TEST_DEF( dt_short_as_integer ) },
+{ TEST_DEF( dt_short_neighbour ) },
+{ TEST_DEF( dt_byte_as_integer ) },
 { TEST_DEF( dt_short_unsigned ) },
 { TEST_DEF( dt_byte_signed ) },
 { TEST_DEF( dt_byte_unsigned ) },
@@ -535,6 +541,34 @@ static int Delta_IndexForFieldInfo( const delta_field_t *pInfo, const char *fiel
 	return -1;
 }
 
+/*
+=====================
+Delta_FieldTypeForSize
+
+delta.lst may give a field an integer type of another size than the C field: GoldSrc's
+custom_entity_state_t sends the short skin (a beam's end entity) as DT_INTEGER, entity_state_t
+the byte eflags too. Little-endian machines then touch the field's low bytes plus its neighbours,
+big-endian ones the wrong bytes (the Xbox 360 lost every server beam's end entity and EFLAG_SLERP).
+Access the field by its real size; the wire format depends on the bits only and stays the same.
+=====================
+*/
+static int Delta_FieldTypeForSize( int flags, int size )
+{
+	const int integer_types = DT_BYTE|DT_SHORT|DT_INTEGER;
+
+	if( !FBitSet( flags, integer_types ))
+		return flags;
+
+	ClearBits( flags, integer_types );
+
+	switch( size )
+	{
+	case 1: return flags | DT_BYTE;
+	case 2: return flags | DT_SHORT;
+	default: return flags | DT_INTEGER;
+	}
+}
+
 static qboolean Delta_AddField( delta_info_t *dt, const char *pName, int flags, int bits, float mul, float post_mul )
 {
 	delta_t *pField;
@@ -546,7 +580,7 @@ static qboolean Delta_AddField( delta_info_t *dt, const char *pName, int flags, 
 		if( !Q_strcmp( pField->name, pName ))
 		{
 			// update existed field
-			pField->flags = flags;
+			pField->flags = Delta_FieldTypeForSize( flags, pField->size );
 			pField->bits = bits;
 			pField->multiplier = mul;
 			pField->post_multiplier = post_mul;
@@ -576,7 +610,7 @@ static qboolean Delta_AddField( delta_info_t *dt, const char *pName, int flags, 
 	pField->name = pFieldInfo->name;
 	pField->offset = pFieldInfo->offset;
 	pField->size = pFieldInfo->size;
-	pField->flags = flags;
+	pField->flags = Delta_FieldTypeForSize( flags, pField->size );
 	pField->bits = bits;
 	pField->multiplier = mul;
 	pField->post_multiplier = post_mul;
@@ -729,6 +763,8 @@ static qboolean Delta_ParseField( char **delta_script, const delta_info_t *dt, d
 		else if( !Q_strcmp( token, "DT_SIGNED" ))
 			pField->flags |= DT_SIGNED;
 	}
+
+	pField->flags = Delta_FieldTypeForSize( pField->flags, pField->size );
 
 	if( Q_strcmp( token, "," ))
 	{
@@ -2233,7 +2269,6 @@ void GAME_EXPORT Delta_SetFieldByIndex( delta_t *pFields, int fieldNumber )
 
 	dt->pFields[fieldNumber].bInactive = false;
 }
-
 void GAME_EXPORT Delta_UnsetFieldByIndex( delta_t *pFields, int fieldNumber )
 {
 	delta_info_t *dt = Delta_FindStructByDelta( pFields );
@@ -2270,6 +2305,8 @@ void Test_RunDelta( void )
 	Delta_AddField( dt, "dt_integer_signed_mul", DT_INTEGER | DT_SIGNED, 24, 2.0f, 1.0f );
 	Delta_AddField( dt, "dt_short_signed_mul", DT_SHORT | DT_SIGNED, 16, 4.0f, 1.0f );
 	Delta_AddField( dt, "dt_byte_signed_mul", DT_BYTE | DT_SIGNED, 8, 2.0f, 1.0f );
+	Delta_AddField( dt, "dt_short_as_integer", DT_INTEGER, 16, 1.0f, 1.0f );
+	Delta_AddField( dt, "dt_byte_as_integer", DT_INTEGER, 2, 1.0f, 1.0f );
 
 	Q_strncpy( from.dt_string, "test data check it's the same", sizeof( from.dt_string ));
 	from.dt_timewindow_big = timebase + 2.3456;
@@ -2286,6 +2323,10 @@ void Test_RunDelta( void )
 	from.dt_integer_signed_mul = -412784;
 	from.dt_short_signed_mul = -1234;
 	from.dt_byte_signed_mul = -30;
+	from.dt_short_as_integer = 1234;
+	from.dt_short_neighbour = 77;
+	from.dt_byte_as_integer = 1;
+	to.dt_short_neighbour = 55;
 
 	MSG_Init( &msg, "test message", buffer, sizeof( buffer ));
 
@@ -2321,6 +2362,9 @@ void Test_RunDelta( void )
 	TASSERT_EQi( from.dt_integer_signed_mul, to.dt_integer_signed_mul );
 	TASSERT_EQi( from.dt_short_signed_mul, to.dt_short_signed_mul );
 	TASSERT_EQi( from.dt_byte_signed_mul, to.dt_byte_signed_mul );
+	TASSERT_EQi( from.dt_short_as_integer, to.dt_short_as_integer );
+	TASSERT_EQi( 55, to.dt_short_neighbour );
+	TASSERT_EQi( from.dt_byte_as_integer, to.dt_byte_as_integer );
 
 	Con_Printf( "from.dt_timewindow_big = %f\n", from.dt_timewindow_big );
 	Con_Printf( "to.dt_timewindow_big   = %f\n", to.dt_timewindow_big );
