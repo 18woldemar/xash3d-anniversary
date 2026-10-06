@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+# The caption files the engine's subtitle system reads: valve/subtitles.txt (English) and
+# valve_<language>/subtitles.txt for every language whose text exists.
+# The text comes from Fograin/hl-subs-mod, which writes it in titles.txt syntax keyed by the name of a
+# sentence group, so the engine parses it with the parser it already has. Its licence allows reuse in a
+# free mod with credit, so a build that ships the captions must credit the mod and carry its licence text.
+# What this tool changes on the way:
+#   - the leading '!' goes, so a key is the sentence name as sound/sentences.txt spells it;
+#   - $chained is dropped: the mod splits a long line into KEY, KEY_PT2, KEY_PT3 and names the next part in
+#     the directive, but the names already say it, so the engine finds the next part by name;
+#   - directives the engine's subtitles ignore ($effect, $position, $fadein, $fadeout, $fxtime, $color,
+#     $color2) are dropped too, so the shipped file says only what is read: $holdtime and the text;
+#   - a key no sentence of the game uses is dropped, with its continuation parts.
+# The bytes of the text are passed through untouched: the mod's Russian file is cp1251, the codepage our
+# Russian creditsfont.fnt draws, and the English one is ASCII.
+# Usage: mksubs [hl-subs-mod checkout]   (default /tmp/hl-subs-mod, git clone of Fograin/hl-subs-mod)
+# Env: MKSUBS_RUN names the run tree (default <workspace>/run/halflife), MKSUBS_DATA the data the
+# sentences are read from (default ~/src/xbox-dev/assets/HalfLife-Steam).
+import os
+import re
+import sys
+
+# the mod's file for each language we ship, relative to its checkout; French, German, Italian and Spanish
+# have the mod's fonts but no text of their own, and their speech is dubbed, so they get no captions at all
+SOURCES = {
+	'valve': 'mod/sm_valve/sm_valve_subs.txt',
+	'valve_russian': 'mod/3_0/Russian/sm_valve_russian/sm_valve_subs.txt',
+}
+
+KEPT_DIRECTIVES = ( b'$holdtime', )
+
+# Speech the game plays as a lone wav rather than a sentence - the train ride's announcements above all -
+# gets a caption under the name of its file. The mod keeps that mapping in its own source, as tables of
+# "<file>" -> "!<sentence>" per sound directory; we read it from there so the two never drift apart.
+GAMESPEC = 'src/subs_mod/sm_gamespec.h'
+
+mod = sys.argv[1] if len( sys.argv ) > 1 else '/tmp/hl-subs-mod'
+run = os.environ.get( 'MKSUBS_RUN', os.path.join( os.path.dirname( os.path.realpath( __file__ )), '..', '..', 'run', 'halflife' ))
+data = os.path.expanduser( os.environ.get( 'MKSUBS_DATA', '~/src/xbox-dev/assets/HalfLife-Steam' ))
+
+def sentence_names():
+	names = set()
+	with open( os.path.join( data, 'valve/sound/sentences.txt' ), 'rb' ) as f:
+		for line in f:
+			m = re.match( rb'\s*([A-Za-z_][A-Za-z_0-9]*)\s', line )
+			if m:
+				names.add( m.group( 1 ).upper() )
+	return names
+
+def aliases( mod ):
+	"""sound file name -> the sentence whose caption it shares."""
+	text = open( os.path.join( mod, GAMESPEC ), encoding = 'latin-1' ).read()
+	tables = {}
+	for name, body in re.findall( r'client_textmessage_sentence_t\s+(\w+)\[\]\s*=\s*\{(.*?)\};', text, re.S ):
+		tables[name] = re.findall( r'\{\s*"([^"]+)"\s*,\s*"!([^"]+)"\s*\}', body )
+
+	out = {}
+	for directory, table in re.findall( r'\{\s*"(\w+)"\s*,\s*strlen\(\s*"\w+"\s*\)\s*,\s*(\w+)\s*,', text ):
+		for sound, sentence in tables.get( table, []):
+			out[( directory + sound ).encode( 'ascii' ).upper()] = sentence.encode( 'ascii' ).upper()
+	return out
+
+def blocks( path ):
+	"""(key, [directive lines], [text lines]) of every KEY { ... } block, as raw bytes.
+
+	A directive of titles.txt syntax holds until another one replaces it, and the engine's parser keeps
+	that state too, so every block is given the directives in effect where it stands. Without that, a
+	block dropped here would take its $holdtime away from the block that follows it, and an alias written
+	at the end of the file would inherit whatever was in effect at the end.
+	"""
+	current, key, text, out = {}, None, None, []
+	with open( path, 'rb' ) as f:
+		for line in f:
+			line = line.rstrip( b'\r\n' )
+			stripped = line.strip()
+			if text is not None:
+				if stripped == b'}':
+					out.append(( key, list( current.values()), text ))
+					key, text = None, None
+				else:
+					text.append( line )
+			elif stripped == b'{':
+				text = []
+			elif stripped.startswith( b'$' ):
+				name = stripped.split()[0].lower()
+				if name in KEPT_DIRECTIVES:
+					current[name] = stripped
+			elif stripped and not stripped.startswith( b'//' ):
+				key = stripped.lstrip( b'!' ).strip().upper()
+	return out
+
+def write( language, path, alias ):
+	used = sentence_names()
+	kept, dropped, out = [], [], []
+	captions = {}
+	spoken_as_file = set( alias.values())
+
+	for key, directives, text in blocks( path ):
+		# a continuation part is named after the line it continues, and rides with it
+		root = re.sub( rb'_PT[0-9]+$', b'', key )
+		# the train ride's announcements and a few scripted lines are wav files with no sentence of their
+		# own, so a key the sentence file does not know can still be one the alias table plays
+		if root not in used and root not in spoken_as_file:
+			dropped.append( key )
+			continue
+		kept.append( key )
+		captions[key] = ( directives, text )
+		out += directives
+		out.append( key )
+		out.append( b'{' )
+		out += text
+		out.append( b'}' )
+		out.append( b'' )
+
+	# the same captions again, under the names of the files that carry the speech
+	for sound, sentence in sorted( alias.items() ):
+		for suffix in [ b'' ] + [ b'_PT%i' % n for n in range( 2, 10 )]:
+			entry = captions.get( sentence + suffix )
+			if not entry:
+				break
+			directives, text = entry
+			out += directives
+			out.append( sound + suffix )
+			out.append( b'{' )
+			out += text
+			out.append( b'}' )
+			out.append( b'' )
+
+	dst = os.path.join( run, language, 'subtitles.txt' )
+	os.makedirs( os.path.dirname( dst ), exist_ok = True )
+	with open( dst, 'wb' ) as f:
+		f.write( b'// Speech subtitles. The text is the Half-Life Subtitles MOD by Fograin92, with edits by\n'
+		         b'// Vit_amiN and Codefreak5: github.com/Fograin/hl-subs-mod. Its licence allows any part of it\n'
+		         b'// in a free Half-Life mod, with the mod credited, which valve/credits.txt does.\n'
+		         b'// Made by tools/mksubs; keyed by the sentence names of sound/sentences.txt.\n\n' )
+		f.write( b'\n'.join( out ))
+
+	spoken = set( k for k in kept if not re.search( rb'_PT[0-9]+$', k ))
+	print( f'{dst}: {len( kept )} captions for {len( spoken )} of {len( used )} sentences '
+	       f'({100.0 * len( spoken ) / len( used ):.0f}%), {len( dropped )} unused keys dropped' )
+
+alias = aliases( mod )
+
+for language, source in SOURCES.items():
+	path = os.path.join( mod, source )
+	if not os.path.exists( path ):
+		sys.exit( f'{path}: not there. Clone Fograin/hl-subs-mod and name its checkout on the command line.' )
+	write( language, path, alias )
