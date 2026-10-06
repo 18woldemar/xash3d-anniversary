@@ -650,6 +650,69 @@ static qboolean Host_FilterTime( double time )
 }
 
 /*
+script <file>: a console script run one line per frame from outside the command buffer, so what the menu
+queues on its own (load, save) runs at once instead of after the rest of the script (scripted menu checks).
+"wait <frames>" pauses it; lines starting with // are skipped. A cfg's "wait" cannot pace a test: it passes
+in the same frame.
+*/
+static struct
+{
+	byte *text;
+	char *pos;
+	int  wait;
+} host_script;
+
+static void Host_Script_f( void )
+{
+	if( host_script.text )
+		Mem_Free( host_script.text );
+
+	host_script.text = FS_LoadFile( Cmd_Argv( 1 ), NULL, false );
+	host_script.pos = (char *)host_script.text;
+	host_script.wait = 0;
+
+	if( !host_script.text )
+		Con_Printf( S_ERROR "script: can't load %s\n", Cmd_Argv( 1 ));
+}
+
+static void Host_ScriptFrame( void )
+{
+	char line[1024];
+	size_t len;
+
+	if( !host_script.pos )
+		return;
+
+	if( host_script.wait > 0 )
+	{
+		host_script.wait--;
+		return;
+	}
+
+	if( !*host_script.pos )
+	{
+		Mem_Free( host_script.text );
+		host_script.text = NULL;
+		host_script.pos = NULL;
+		return;
+	}
+
+	len = strcspn( host_script.pos, "\r\n" );
+	Q_strncpy( line, host_script.pos, Q_min( len + 1, sizeof( line )));
+	host_script.pos += len;
+	host_script.pos += strspn( host_script.pos, "\r\n" );
+
+	if( !Q_strncmp( line, "wait ", 5 ))
+		host_script.wait = Q_atoi( line + 5 );
+	else if( line[0] && Q_strncmp( line, "//", 2 ))
+	{
+		Cbuf_AddText( line );
+		Cbuf_AddText( "\n" );
+		Cbuf_Execute();
+	}
+}
+
+/*
 =================
 Host_Frame
 =================
@@ -668,6 +731,7 @@ void Host_Frame( double time )
 	Host_InputFrame ();  // input frame
 	Host_ClientBegin (); // begin client
 	Host_GetCommands (); // dedicated in
+	Host_ScriptFrame();
 	Host_ServerFrame (); // server frame
 	Host_ClientFrame (); // client frame
 	HTTP_Run();			 // both server and client
@@ -1198,6 +1262,7 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
 		Cmd_AddRestrictedCommand ( "sys_error", Sys_Error_f, "just throw a fatal error to test shutdown procedures");
 		Cmd_AddRestrictedCommand ( "host_error", Host_Error_f, "just throw a host error to test shutdown procedures");
 		Cmd_AddRestrictedCommand ( "crash", Host_Crash_f, "a way to force a bus error for development reasons");
+		Cmd_AddRestrictedCommand( "script", Host_Script_f, "run a console script one line per frame (scripted menu checks)" );
 	}
 
 	Cvar_RegisterVariable( &host_allow_materials );
