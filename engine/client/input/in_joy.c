@@ -156,6 +156,8 @@ Joy_HatMotionEvent
 DPad events
 ============
 */
+static int joy_hat_keys; // what the last Joy_HatMotionEvent pressed, so only it is released
+
 static void Joy_HatMotionEvent( int value )
 {
 	struct
@@ -183,6 +185,8 @@ static void Joy_HatMotionEvent( int value )
 				Key_Event( keys[i].key, false );
 		}
 	}
+
+	joy_hat_keys = value;
 }
 
 /*
@@ -286,15 +290,19 @@ static void Joy_ProcessStick( const engineAxis_t engineAxis, short value )
 	joyaxis[engineAxis].val = value;
 
 	// fwd/side axis simulate hat movement
-	if( ( engineAxis == JOY_AXIS_SIDE || engineAxis == JOY_AXIS_FWD ) &&
-		( cls.key_dest == key_menu || cls.key_dest == key_console ))
+	if( engineAxis == JOY_AXIS_SIDE || engineAxis == JOY_AXIS_FWD )
 	{
 		int val = 0;
 
-		val |= Joy_GetHatValueForAxis( JOY_AXIS_SIDE );
-		val |= Joy_GetHatValueForAxis( JOY_AXIS_FWD );
+		if( cls.key_dest == key_menu || cls.key_dest == key_console )
+		{
+			val |= Joy_GetHatValueForAxis( JOY_AXIS_SIDE );
+			val |= Joy_GetHatValueForAxis( JOY_AXIS_FWD );
+		}
 
-		Joy_HatMotionEvent( val );
+		// a menu closed under a held stick left its arrow down, and the bind behind it ran on in the game
+		if( val || joy_hat_keys )
+			Joy_HatMotionEvent( val );
 	}
 }
 
