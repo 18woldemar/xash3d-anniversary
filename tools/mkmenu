@@ -38,6 +38,8 @@ BTN_W, BTN_H = 156, 26
 BTN_SIZE, BTN_X, BTN_BASE = 15, 4, 17	# fitted to Valve's "New game": same width and the same baseline
 BTN_FLAT = (240, 180, 63)
 BUTTONS = {		# index in the PC_ enum: the string mainui labels it with
+	8: 'GameUI_Multiplayer', 28: 'Internet game', 30: 'LAN game', 31: 'GameUI_GameMenu_Customize', 35: 'Refresh',
+	39: 'GameUI_GameMenu_CreateServer', 47: 'Join game',
 	0: 'GameUI_NewGame', 1: 'GameUI_GameMenu_ResumeGame', 2: 'GameUI_TrainingRoom', 3: 'GameUI_Options',
 	4: 'GameUI_LoadGame', 5: 'Save\\Load Game', 7: 'GameUI_GameMenu_Quit',
 	9: 'GameUI_Easy', 10: 'GameUI_Medium', 11: 'GameUI_Hard', 12: 'GameUI_SaveGame', 13: 'GameUI_LoadGame',
