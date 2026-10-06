@@ -43,7 +43,7 @@ BUTTONS = {		# index in the PC_ enum: the string mainui labels it with
 	14: 'GameUI_Cancel', 15: 'Game options', 16: 'GameUI_Video', 17: 'GameUI_Audio', 18: 'Controller',
 	19: 'Done', 21: 'GameUI_UseDefaults', 22: 'GameUI_OK', 23: 'Video options', 24: 'Video modes',
 	25: 'Adv. Controls', 27: 'Delete', 52: 'Update', 54: 'GameUI_GameMenu_Disconnect', 55: 'GameUI_Console',
-	59: 'Previews', 60: 'Adv. Options', 61: 'GameUI_ChangeGame', 62: 'Activate', 64: 'Visit web site',
+	59: 'Previews', 60: 'Adv. Options', 62: 'GameUI_ChangeGame', 63: 'Activate', 65: 'Visit web site',
 }	# 18 is PC_CONTROLS: the gamepad menu's Controller button (the Controls page is not in it)
 
 BANNERS = {

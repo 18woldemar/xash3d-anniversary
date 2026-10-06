@@ -7,6 +7,10 @@ menu_options
 wait 60
 echo MENUSHOT configuration
 wait 90
+menu_controller
+wait 60
+echo MENUSHOT controller
+wait 90
 menu_audio
 wait 60
 echo MENUSHOT audio
