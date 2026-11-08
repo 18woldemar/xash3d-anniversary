@@ -19,6 +19,7 @@ GNU General Public License for more details.
 static cvar_t *r_showtex;
 static cvar_t *r_msaa;
 static float   gl3_msaa_applied = 0.0f;
+static int     gl3_width, gl3_height;
 static cvar_t *r_style;
 static float   gl3_style_applied = -1.0f;
 
@@ -111,6 +112,13 @@ static void R_BeginFrame( qboolean clearScene )
 			R_GL3ApplyStyle( R_GL3Style( ));
 		gl3_style_applied = r_style->value;
 		gl3_msaa_applied = -1.0f; // the scene target is the style's as well: 16 bit for the software one
+	}
+
+	if( gpGlobals->width != gl3_width || gpGlobals->height != gl3_height )
+	{
+		gl3_width = gpGlobals->width;
+		gl3_height = gpGlobals->height;
+		gl3_msaa_applied = -1.0f; // the scene target is the size of the window
 	}
 
 	if( r_msaa->value != gl3_msaa_applied )

@@ -12,8 +12,9 @@ limit=${3:-900}
 out=$top/shots/$1
 run=${RUN_DIR:-$top/run/halflife}
 log=$run/engine.log
-# the 1280x720 window sits centred on the 1920x1080 headless screen
-crop=1280x720+320+180
+# the window sits centred on the 1920x1080 headless screen
+w=${RUN_W:-1280} h=${RUN_H:-720}
+crop=${w}x$h+$(((1920 - w) / 2))+$(((1080 - h) / 2))
 mkdir -p "$out" "$run/valve"
 rm -f "$out"/*.png
 cp "$list" "$run/valve/shots.txt"
