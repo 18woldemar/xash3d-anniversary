@@ -24,6 +24,7 @@ bone per vertex and at most 64 bones per submodel, so each submodel maps its bon
 
 #include "r_local.h"
 #include "studio.glsl.h"
+#include "shadow.glsl.h"
 
 #define GL3_STUDIO_BONES   64
 #define GL3_MAX_SHADOW_CASTERS 12 // models in the flashlight's map; the cone holds few
@@ -59,7 +60,6 @@ typedef struct gl3_studiosub_s
 static struct
 {
 	gl3_program_t *prog;
-	// ponytail: the flashlight's programs come with the flashlight (step 6 of HANDOFF); until then it is never active
 	gl3_program_t *spot_prog, *shadow_prog;
 
 	// what cast into the flashlight's map: the bones of the models drawn last frame. The map is filled
@@ -673,7 +673,9 @@ INIT
 qboolean R_GL3InitStudioMeshes( void )
 {
 	gl3_sm.prog = R_GL3CreateProgram( "studio", studio_glsl, NULL );
-	if( !gl3_sm.prog )
+	gl3_sm.spot_prog = R_GL3CreateSpotProgram( "studio", studio_glsl, NULL );
+	gl3_sm.shadow_prog = R_GL3CreateProgram( "shadow", shadow_glsl, "#define STUDIO 1\n" );
+	if( !gl3_sm.prog || !gl3_sm.spot_prog || !gl3_sm.shadow_prog )
 		return false;
 
 	glGenTextures( 1, &gl3_sm.gamma );

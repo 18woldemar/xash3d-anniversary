@@ -1,12 +1,14 @@
 // Studio models: one bone per vertex, skinned here, lit per vertex as ref_gl's R_StudioLighting and
 // R_LightLambert do (gl_studio.c), including their byte truncations and gamma table lookups.
+// Defines: SPOT, the flashlight's cone on top.
 
 #ifdef VERTEX_SHADER
 // 0..3 world to clip; 4 eye plane; 5 ambient, shade, flat shade (0/1), fullbright (0/1); 6 light colour, a the
 // vertex alpha; 7 light direction, w 1 = chrome texcoords; 8 chrome origin, w 1 = colour is the blend (TransAdd);
 // 9 view right, w blend; 10 1 / texture size, w 1 = local lights; 11..14 local lights: origin, R^2;
-// 15..18 their colours through the linear gamma table (0..1023); 20..211 3x4 bone matrices, three rows each
-uniform vec4 vsc[212];
+// 15..18 their colours through the linear gamma table (0..1023); 20..211 3x4 bone matrices, three rows each;
+// 212..215 world to the flashlight's clip space
+uniform vec4 vsc[216];
 
 // rows: light gamma, linear gamma, screen gamma
 uniform usampler2D s_gamma;
@@ -19,6 +21,11 @@ in float a_extra;   // index into the bones
 out vec4 v_color;
 out vec2 v_texcoord;
 out float v_fogz;
+#ifdef SPOT
+out vec4 v_spot;
+out vec3 v_wpos;
+out vec3 v_nrm;
+#endif
 
 float gamma_table( int row, float index )
 {
@@ -36,6 +43,13 @@ void main()
 
 	gl_Position = vec4( dot( vsc[0], w ), dot( vsc[1], w ), dot( vsc[2], w ), dot( vsc[3], w ));
 	v_fogz = dot( vsc[4], w );
+#ifdef SPOT
+	// Source lights a model by the cone with a plain Lambert term; the bones give the normal here and the
+	// fragment stage has the lamp
+	v_spot = vec4( dot( vsc[212], w ), dot( vsc[213], w ), dot( vsc[214], w ), dot( vsc[215], w ));
+	v_wpos = world;
+	v_nrm = normal;
+#endif
 
 	// R_StudioLighting
 	if( vsc[8].w > 0.5 )
@@ -116,23 +130,53 @@ void main()
 #endif
 
 #ifdef FRAGMENT_SHADER
-uniform vec4 psc[32]; // 1 rgb fog colour, a 1 / fog end (0: none); 31 x alpha ref
+// 1 rgb fog colour, a 1 / fog end (0: none); 2 rgb the flashlight, a its linear attenuation;
+// 3 xyz where the lamp hangs, w 1 / its range; 31 x alpha ref
+uniform vec4 psc[32];
 uniform sampler2D s_texture;
 
 in vec4 v_color;
 in vec2 v_texcoord;
 in float v_fogz;
+#ifdef SPOT
+in vec4 v_spot;
+in vec3 v_wpos;
+in vec3 v_nrm;
+#endif
 
 out vec4 o_color;
 
 void main()
 {
-	vec4 c = texture( s_texture, v_texcoord ) * v_color;
+	vec4 skin = texture( s_texture, v_texcoord );
+	vec4 c = skin * v_color;
+	float fog = clamp( 1.0 - abs( v_fogz ) * psc[1].a, 0.0, 1.0 );
 
 	if( c.a * 255.0 <= psc[31].x )
 		discard;
 
-	c.rgb = mix( psc[1].rgb, c.rgb, clamp( 1.0 - abs( v_fogz ) * psc[1].a, 0.0, 1.0 ));
+	c.rgb = mix( psc[1].rgb, c.rgb, fog );
+
+#ifdef SPOT
+	// the cookie read through the projection and falling off with the distance along it, lighting the model's own
+	// skin. The map holds the world of this frame and the models of the one before it, since posing a model twice
+	// would move its animation on: the bias has to cover how far a model moved, and 0.02 of the range is 15 units.
+	vec2 uv = v_spot.xy / v_spot.w * 0.5 + 0.5;
+
+	if( v_spot.w > 0.0 && all( equal( clamp( uv, 0.0, 1.0 ), uv )))
+	{
+		vec3 tolamp = psc[3].xyz - v_wpos;
+		float d = length( tolamp );
+		float att = clamp( psc[2].a / d, 0.0, 1.0 );
+		float endfade = clamp(( 1.0 - d * psc[3].a ) * 2.5, 0.0, 1.0 );
+		float ndotl = clamp( dot( normalize( v_nrm ), tolamp / d ), 0.0, 1.0 );
+		float lit = gl3_shadowed( uv, v_spot.w * psc[3].a, 0.02 + 0.01 * ( 1.0 - ndotl ));
+
+		lit = clamp( mix( mix( lit, 1.0, GL3_SHADOW_ATTEN ), lit, att ), 0.0, 1.0 );
+		c.rgb += skin.rgb * texture( s_cookie, uv ).rgb * psc[2].rgb * att * endfade * ndotl * lit * fog;
+	}
+#endif
+
 	o_color = c;
 }
 #endif

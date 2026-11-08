@@ -2600,6 +2600,19 @@ CL_UpdateFlashlight
 update client flashlight
 ================
 */
+// ref_gl3's enhanced style projects the flashlight from the eye instead, so the local player's dynamic light
+// would only add a blob on top of it. Other players keep theirs, as the renderer lights only ours.
+static qboolean CL_ProjectedFlashlight( const cl_entity_t *ent )
+{
+	convar_t *style = Cvar_FindVar( "r_style" );
+	convar_t *light = Cvar_FindVar( "r_flashlight" );
+
+	if( ent->index != ( cl.playernum + 1 ))
+		return false;
+
+	return style && light && (int)style->value == 2 && light->value != 0.0f;
+}
+
 static void CL_UpdateFlashlight( cl_entity_t *ent )
 {
 	vec3_t		forward, view_ofs;
@@ -2607,6 +2620,9 @@ static void CL_UpdateFlashlight( cl_entity_t *ent )
 	pmtrace_t		trace;
 	cl_entity_t	*hit;
 	dlight_t		*dl;
+
+	if( CL_ProjectedFlashlight( ent ))
+		return;
 
 	if( ent->index == ( cl.playernum + 1 ))
 	{

@@ -18,7 +18,7 @@ GNU General Public License for more details.
 Half-Life's own flashlight is a dynamic light dropped where the player's view hits something
 (`CL_UpdateFlashlight`, `cl_tent.c`): a round blob on the wall that also lights whatever is behind the
 wall, since a dlight has no direction at all. Half-Life 2 projects a texture from the eye instead, which
-is what this does: a cone with the cookie of `materials/effects/flashlight001` over it.
+is what this does: a cone with a cookie over it.
 
 The light sits at the eye and points where the player looks, so every surface the player can see faces the
 light. That is why no surface normal is needed here, and why the projection alone looks right.
@@ -40,7 +40,8 @@ light. That is why no surface normal is needed here, and why the projection alon
 #define GL3_FLASHLIGHT_SMOOTH 0.2f     // the drag on that push, per frame, as HL2 has it
 #define GL3_FLASHLIGHT_LINEAR 100.0f   // r_flashlightlinear: the light is white within this many units
 #define GL3_FLASHLIGHT_BRIGHT 2.0f     // what HL2 multiplies the cone by when it is not rendering in HDR
-#define GL3_SHADOW_SIZE       512      // r_flashlightdepthres on the Xbox 360
+#define GL3_SHADOW_SIZE       512      // shadow map, and the size shaders/flashlight.glsl filters it at
+#define GL3_COOKIE_SIZE       256
 
 static struct
 {
@@ -54,10 +55,9 @@ static struct
 	float     params[4];  // pixel shader: rgb of the light, w its linear attenuation
 	float     params2[4]; // xyz the lamp, w 1 / far
 
-	IDirect3DSurface9 *shadow_color;
-	IDirect3DSurface9 *shadow_depth;
-	IDirect3DTexture9 *shadow_d3d;
-	int                shadow;   // the texture slot that owns shadow_d3d
+	GLuint             shadow_fbo;
+	GLuint             shadow_depth;
+	int                shadow;   // the texture slot that owns the map's texture
 	qboolean           shadowed; // this frame's map holds something
 } gl3_flashlight;
 
@@ -74,14 +74,53 @@ void R_GL3InitFlashlight( void )
 	gl3_flashlight.cookie = 0;
 }
 
+/*
+==================
+R_GL3FlashlightCookie
+
+The shape of the beam, drawn here so that no game's art has to be shipped: a bright core, a soft ring around it
+and black at the rim. A gfx/flashlight.tga of the game's own takes its place.
+==================
+*/
 int R_GL3FlashlightCookie( void )
 {
-	if( !gl3_flashlight.cookie )
+	byte *rgba;
+	GLuint glnum = 0;
+
+	if( gl3_flashlight.cookie )
+		return gl3_flashlight.cookie;
+
+	gl3_flashlight.cookie = R_GL3LoadTexture( "gfx/flashlight.tga", NULL, 0, TF_CLAMP | TF_NOMIPMAP );
+	if( gl3_flashlight.cookie )
+		return gl3_flashlight.cookie;
+
+	rgba = (byte *)Mem_Malloc( r_temppool, GL3_COOKIE_SIZE * GL3_COOKIE_SIZE * 4 );
+
+	for( int y = 0; y < GL3_COOKIE_SIZE; y++ )
 	{
-		gl3_flashlight.cookie = R_GL3LoadTexture( "gfx/xenon/flashlight.tga", NULL, 0,
-			TF_CLAMP | TF_NOMIPMAP );
+		for( int x = 0; x < GL3_COOKIE_SIZE; x++ )
+		{
+			const float u = ( x + 0.5f ) / GL3_COOKIE_SIZE * 2.0f - 1.0f;
+			const float v = ( y + 0.5f ) / GL3_COOKIE_SIZE * 2.0f - 1.0f;
+			const float r = sqrt( u * u + v * v );
+			const float edge = bound( 0.0f, ( 1.0f - r ) / 0.3f, 1.0f ); // the rim fades over the last 30 %
+			const float ring = 0.75f + 0.25f * ( 1.0f - bound( 0.0f, r / 0.55f, 1.0f )); // and the core is the brightest
+			const byte value = (byte)( edge * edge * ( 3.0f - 2.0f * edge ) * ring * 255.0f );
+			byte *out = rgba + ( y * GL3_COOKIE_SIZE + x ) * 4;
+
+			out[0] = out[1] = out[2] = value;
+			out[3] = 255;
+		}
 	}
 
+	glGenTextures( 1, &glnum );
+	glBindTexture( GL_TEXTURE_2D, glnum );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, GL3_COOKIE_SIZE, GL3_COOKIE_SIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
+	R_GL3ForgetBindings();
+	Mem_Free( rgba );
+
+	gl3_flashlight.cookie = R_GL3WrapTexture( "*flashcookie", glnum, GL3_COOKIE_SIZE, GL3_COOKIE_SIZE, TF_CLAMP | TF_NOMIPMAP );
 	return gl3_flashlight.cookie;
 }
 
@@ -102,103 +141,94 @@ int R_GL3FlashlightShadowMap( void )
 
 static qboolean R_GL3FlashlightMakeShadowMap( void )
 {
-	D3DSURFACE_PARAMETERS depth_params;
-	const int tiles = (( GL3_SHADOW_SIZE + 79 ) / 80 ) * (( GL3_SHADOW_SIZE + 15 ) / 16 );
+	GLuint color = 0;
 
 	if( gl3_flashlight.shadow )
 		return true;
 
-	// The map shares EDRAM with the scene's bands - there is no room for both - so the pass waits for
-	// the GPU before it draws (R_GL3WaitForGPU). Colour sits at the start and depth right after it.
-	memset( &depth_params, 0, sizeof( depth_params ));
-	depth_params.Base = tiles;
-	depth_params.HierarchicalZBase = 0xffffffff;
+	glGenTextures( 1, &color );
+	glBindTexture( GL_TEXTURE_2D, color );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_R32F, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE, 0, GL_RED, GL_FLOAT, NULL );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
+	R_GL3ForgetBindings();
 
-	if( FAILED( gl3_device->CreateRenderTarget( GL3_SHADOW_SIZE, GL3_SHADOW_SIZE, D3DFMT_A8R8G8B8,
-			D3DMULTISAMPLE_NONE, 0, FALSE, &gl3_flashlight.shadow_color, NULL ))
-		|| FAILED( gl3_device->CreateDepthStencilSurface( GL3_SHADOW_SIZE, GL3_SHADOW_SIZE, D3DFMT_D24S8,
-			D3DMULTISAMPLE_NONE, 0, FALSE, &gl3_flashlight.shadow_depth, &depth_params ))
-		|| FAILED( gl3_device->CreateTexture( GL3_SHADOW_SIZE, GL3_SHADOW_SIZE, 1, D3DUSAGE_RENDERTARGET,
-			D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &gl3_flashlight.shadow_d3d, NULL )))
+	glGenRenderbuffers( 1, &gl3_flashlight.shadow_depth );
+	glBindRenderbuffer( GL_RENDERBUFFER, gl3_flashlight.shadow_depth );
+	glRenderbufferStorageMultisample( GL_RENDERBUFFER, 0, GL_DEPTH_COMPONENT24, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE );
+	glBindRenderbuffer( GL_RENDERBUFFER, 0 );
+
+	glGenFramebuffers( 1, &gl3_flashlight.shadow_fbo );
+	glBindFramebuffer( GL_FRAMEBUFFER, gl3_flashlight.shadow_fbo );
+	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0 );
+	glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, gl3_flashlight.shadow_depth );
+
+	gl3_flashlight.shadow = R_GL3WrapTexture( "*flashshadow", color, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE,
+		TF_NEAREST | TF_CLAMP | TF_NOMIPMAP );
+
+	if( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE || !gl3_flashlight.shadow )
 	{
-		gEngfuncs.Con_Printf( S_ERROR "ref_gl3: no room for the flashlight's shadow map\n" );
+		gEngfuncs.Con_Printf( S_ERROR "ref_gl3: no flashlight shadow map\n" );
+		R_GL3RestoreBackBuffer();
 		R_GL3FreeFlashlight();
 		gEngfuncs.Cvar_Set( "r_flashlight_shadows", "0" );
 		return false;
 	}
 
-	gl3_flashlight.shadow = R_GL3WrapTexture( "*flashshadow", gl3_flashlight.shadow_d3d,
-		GL3_SHADOW_SIZE, GL3_SHADOW_SIZE, TF_NEAREST | TF_CLAMP | TF_NOMIPMAP );
-	return gl3_flashlight.shadow != 0;
+	R_GL3RestoreBackBuffer();
+	return true;
 }
 
 void R_GL3FreeFlashlight( void )
 {
 	if( gl3_flashlight.shadow )
 		R_GL3FreeTexture( gl3_flashlight.shadow );
-	else if( gl3_flashlight.shadow_d3d )
-		gl3_flashlight.shadow_d3d->Release();
-
-	if( gl3_flashlight.shadow_color )
-		gl3_flashlight.shadow_color->Release();
+	if( gl3_flashlight.cookie )
+		R_GL3FreeTexture( gl3_flashlight.cookie );
+	if( gl3_flashlight.shadow_fbo )
+		glDeleteFramebuffers( 1, &gl3_flashlight.shadow_fbo );
 	if( gl3_flashlight.shadow_depth )
-		gl3_flashlight.shadow_depth->Release();
+		glDeleteRenderbuffers( 1, &gl3_flashlight.shadow_depth );
 
 	gl3_flashlight.shadow = 0;
-	gl3_flashlight.shadow_d3d = NULL;
-	gl3_flashlight.shadow_color = NULL;
-	gl3_flashlight.shadow_depth = NULL;
+	gl3_flashlight.cookie = 0;
+	gl3_flashlight.shadow_fbo = 0;
+	gl3_flashlight.shadow_depth = 0;
 }
 
 /*
 ==================
 R_GL3FlashlightShadow
 
-The world from the light, into a 512x512 map, before the scene's bands take EDRAM. Only what the main
-view collected is in there, which is what the beam can reach anyway, and the whole pass is one shader.
+The world from the light, into a 512x512 map, before the scene target binds. Only what the main view collected is
+in there, which is what the beam can reach anyway, and the whole pass is one shader.
 ==================
 */
 void R_GL3FlashlightShadow( int first, int last )
 {
 	const float range[4] = { 1.0f / GL3_FLASHLIGHT_RANGE, 0.0f, 0.0f, 0.0f };
 	gl3_states_t states;
-	D3DVIEWPORT9 vp;
 
 	gl3_flashlight.shadowed = false;
 
 	if( !gl3_flashlight.active || !r_flashlight_shadows->value )
 		return;
 
-	// The map's own surfaces live at the start of EDRAM, which belongs to the bands. Without them the
-	// frame draws straight into the back buffer and that same memory is the picture, so the pass would
-	// write its depth over what the player sees. The lighting falls back to *white, which reads as
-	// nothing in the way.
-	if( !R_GL3SceneTargetWanted( ))
-		return;
-
+	R_GL3DrawReset();
 	if( !R_GL3FlashlightMakeShadowMap( ))
 		return;
 
-	// the bands of the frame before this one may still be replaying over the tiles we are about to use
-	R_GL3WaitForGPU();
-
-	R_GL3DrawReset();
-	gl3_device->SetRenderTarget( 0, gl3_flashlight.shadow_color );
-	gl3_device->SetDepthStencilSurface( gl3_flashlight.shadow_depth );
-
-	vp.X = vp.Y = 0;
-	vp.Width = vp.Height = GL3_SHADOW_SIZE;
-	vp.MinZ = 0.0f;
-	vp.MaxZ = 1.0f;
-	gl3_device->SetViewport( &vp );
-	gl3_device->Clear( 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xffffffff, 1.0f, 0 );
-	gl3_device->SetPixelShaderConstantF( 0, range, 1 );
+	glBindFramebuffer( GL_FRAMEBUFFER, gl3_flashlight.shadow_fbo );
+	glViewport( 0, 0, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE );
+	glDepthRange( 0.0, 1.0 );
+	glClearColor( 1.0f, 1.0f, 1.0f, 1.0f );
+	R_GL3ClearBuffers( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+	R_GL3SetPSConstants( 0, range, 1 );
 
 	// both sides cast: a one-sided pass would let the light through the back of thin geometry
 	R_GL3DefaultStates( &states );
-	states.cull = D3DCULL_NONE;
-	states.zwrite = TRUE;
-	states.ztest = TRUE;
+	states.cull = GL3_CULL_NONE;
+	states.zwrite = true;
+	states.ztest = true;
 	gl3_wanted = states;
 	R_GL3ApplyStates();
 
@@ -207,7 +237,6 @@ void R_GL3FlashlightShadow( int first, int last )
 	// and the models, which are the shadows a player actually sees
 	R_GL3StudioDrawShadowCasters();
 
-	gl3_device->Resolve( D3DRESOLVE_RENDERTARGET0, NULL, gl3_flashlight.shadow_d3d, NULL, 0, 0, NULL, 0.0f, 0, NULL );
 	R_GL3RestoreBackBuffer();
 	R_GL3RestoreViewViewport(); // the view's own, which this pass replaced with the map's
 	R_GL3DrawReset();
@@ -228,7 +257,7 @@ const float *R_GL3FlashlightParams( void )
 // whether a map will be built at all this frame: the models only keep their poses for one that is
 qboolean R_GL3FlashlightShadowsWanted( void )
 {
-	return gl3_flashlight.active && r_flashlight_shadows->value != 0.0f && R_GL3SceneTargetWanted( );
+	return gl3_flashlight.active && r_flashlight_shadows->value != 0.0f;
 }
 
 // the lamp itself and 1 / its range: the shaders measure the distance from it, as HL2's model path does
@@ -378,7 +407,5 @@ void R_GL3FlashlightObject( const matrix4x4 object, float rows[16] )
 	matrix4x4 m;
 
 	Matrix4x4_Concat( m, gl3_flashlight.matrix, object );
-
-	// the same clip space the rest of the renderer works in: z from 0 to w, not from -w
 	R_GL3ClipMatrix( m, rows );
 }

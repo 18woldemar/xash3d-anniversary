@@ -228,11 +228,6 @@ void R_GL3BeginSceneTarget( void )
 	gl3_scene.pending = true;
 }
 
-void R_GL3WaitForGPU( void )
-{
-	// OpenGL orders a frame's passes by itself
-}
-
 void R_GL3EnsureSceneTarget( void )
 {
 	if( !gl3_scene.pending || gl3_scene.active )
@@ -277,12 +272,6 @@ void R_GL3EndSceneTarget( void )
 qboolean R_GL3SceneTargetActive( void )
 {
 	return gl3_scene.active;
-}
-
-// true when the frame goes through the target at all
-qboolean R_GL3SceneTargetWanted( void )
-{
-	return gl3_scene.enabled;
 }
 
 // after a pass of its own (the shadow map), the frame draws where it drew before

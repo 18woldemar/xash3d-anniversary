@@ -27,6 +27,7 @@ the index buffer once per view with a new store, so the driver never waits for t
 
 #include "r_local.h"
 #include "world.glsl.h"
+#include "shadow.glsl.h"
 
 #define GL3_WORLD_MAX_INDICES ( 1 << 18 )
 #define GL3_WORLD_MAX_DRAWS   4096
@@ -71,7 +72,6 @@ typedef struct
 static struct
 {
 	gl3_program_t *prog, *warp_prog, *warpsw_prog;
-	// ponytail: the flashlight's programs come with the flashlight (step 6 of HANDOFF); until then it is never active
 	gl3_program_t *spot_prog, *warpswspot_prog, *shadow_prog;
 	GLuint         vao, vbo, ibo;  // the map's polygons and this view's indices
 	GLuint         dyn_vao, dyn_vbo; // this view's dynamic-lit faces and decals
@@ -1852,7 +1852,11 @@ qboolean R_GL3InitWorld( void )
 	gl3_world.prog = R_GL3CreateProgram( "world", world_glsl, NULL );
 	gl3_world.warp_prog = R_GL3CreateProgram( "world", world_glsl, "#define WARP 1\n" );
 	gl3_world.warpsw_prog = R_GL3CreateProgram( "world", world_glsl, "#define WARP_SW 1\n" );
-	if( !gl3_world.prog || !gl3_world.warp_prog || !gl3_world.warpsw_prog )
+	gl3_world.spot_prog = R_GL3CreateSpotProgram( "world", world_glsl, NULL );
+	gl3_world.warpswspot_prog = R_GL3CreateSpotProgram( "world", world_glsl, "#define WARP_SW 1\n" );
+	gl3_world.shadow_prog = R_GL3CreateProgram( "shadow", shadow_glsl, NULL );
+	if( !gl3_world.prog || !gl3_world.warp_prog || !gl3_world.warpsw_prog || !gl3_world.spot_prog
+		|| !gl3_world.warpswspot_prog || !gl3_world.shadow_prog )
 		return false;
 
 	glGenVertexArrays( 1, &gl3_world.vao );

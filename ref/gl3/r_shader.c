@@ -24,6 +24,7 @@ Attributes and samplers have fixed numbers for every program (r_local.h GL3_ATTR
 */
 
 #include "r_local.h"
+#include "flashlight.glsl.h"
 
 #define GL3_MAX_PROGRAMS 32
 
@@ -164,6 +165,15 @@ gl3_program_t *R_GL3CreateProgram( const char *name, const char *source, const c
 
 	gl3_num_programs++;
 	return p;
+}
+
+// a program with the flashlight's cone: its filter goes in front of the shader file
+gl3_program_t *R_GL3CreateSpotProgram( const char *name, const char *source, const char *defines )
+{
+	char prefix[8192];
+
+	Q_snprintf( prefix, sizeof( prefix ), "%s#define SPOT 1\n%s", defines ? defines : "", flashlight_glsl );
+	return R_GL3CreateProgram( name, source, prefix );
 }
 
 void R_GL3UseProgram( gl3_program_t *p )

@@ -238,8 +238,6 @@ void R_GL3BindCookie( int texnum );
 void R_GL3BindShadowMap( int texnum );
 void R_GL3EnsureSceneTarget( void );
 qboolean R_GL3SceneTargetActive( void );
-qboolean R_GL3SceneTargetWanted( void );
-void R_GL3WaitForGPU( void );
 void R_GL3RestoreBackBuffer( void );
 void R_GL3UnbindTexture( GLuint glnum );
 void R_GL3ForgetBindings( void );
@@ -290,6 +288,7 @@ typedef struct
 } gl3_program_t;
 
 gl3_program_t *R_GL3CreateProgram( const char *name, const char *source, const char *defines );
+gl3_program_t *R_GL3CreateSpotProgram( const char *name, const char *source, const char *defines );
 void R_GL3UseProgram( gl3_program_t *p );
 void R_GL3SetVSConstants( int start, const float *data, int count );
 void R_GL3SetPSConstants( int start, const float *data, int count );

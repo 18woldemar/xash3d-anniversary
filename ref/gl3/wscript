@@ -9,8 +9,6 @@ def options(opt):
 def configure(conf):
 	pass
 
-NOT_PORTED = ['r_flashlight.c']
-
 def glsl_header(task):
 	# shaders/<name>.glsl becomes "<name>.glsl.h" holding the source as the string <name>_glsl
 	name = task.inputs[0].name[:-len('.glsl')]
@@ -23,8 +21,7 @@ def build(bld):
 		bld(rule = glsl_header, source = glsl, target = glsl.name + '.h', before = ['c'])
 
 	bld.shlib(
-		# ponytail: files not yet moved to GL are left out and r_stubs.c answers for them; goes with the last port
-		source = bld.path.ant_glob('*.c', excl = NOT_PORTED),
+		source = bld.path.ant_glob('*.c'),
 		target = 'ref_gl3',
 		includes = '. ' + bld.path.get_bld().abspath(),
 		features = 'c',
