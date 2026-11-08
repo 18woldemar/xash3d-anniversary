@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# A release archive for Linux and the Steam Deck: everything but the game, which the launcher finds in Steam.
+# A release is built inside Valve's Steam Runtime 3 SDK, so the binaries ask for no newer glibc than the Deck has.
+# The menu art and the captions come from the run tree: run tools/mkmenu and tools/mksubs first.
+# Usage: package <version> [output directory]    (default <workspace>/dist)
+# SNIPER_ROOT is the unpacked SDK sysroot (default <workspace>/build/sniper/root), from
+# repo.steampowered.com/steamrt3/images/latest-public-beta/, the file ...Sdk-amd64,i386-sniper-sysroot.tar.gz
+# PACKAGE_HOST=1 packs this machine's own build instead: for checking the archive, it will not run on a Deck.
+set -euo pipefail
+[ $# -ge 1 ] || { sed -n '2,8p' "$0" >&2; exit 2; }
+version=$1
+tools=$(dirname "$(readlink -f "$0")")
+top=$(readlink -f "$tools/../..")
+out=${2:-$top/dist}
+root=${SNIPER_ROOT:-$top/build/sniper/root}
+run=$top/run/halflife
+work=$top/build/package
+name=xash3d-anniversary-$version
+dst=$work/$name
+
+for f in valve/gfx/shell/head_video.tga valve/gfx/shell/pad_y.tga valve/resource/mainui_russian.txt valve/subtitles_english.txt; do
+	[ -f "$run/$f" ] || { echo "package: no $f in the run tree: run tools/mkmenu and tools/mksubs" >&2; exit 1; }
+done
+
+rm -rf "$work"
+mkdir -p "$work" "$dst" "$out"
+
+if [ -n "${PACKAGE_HOST:-}" ]; then
+	cp -a "$top/build/prefix/." "$dst/"
+else
+	[ -x "$root/usr/bin/gcc" ] || { echo "package: no SDK at $root" >&2; exit 1; }
+	mkdir -p "$work/src"
+	for tree in xash3d-anniversary hlsdk-anniversary; do
+		rsync -a --exclude='.lock-waf*' --exclude='.waf-*' "$top/$tree" "$work/src/"
+	done
+
+	cat > "$work/build.sh" <<'EOS'
+set -e
+for tree in xash3d-anniversary hlsdk-anniversary; do
+	cd /w/build/package/src/$tree
+	./waf configure -T release -8 -o /w/build/package/out/$tree --prefix=/ > /w/build/package/$tree.log 2>&1
+	./waf build install --destdir=/w/build/package/prefix >> /w/build/package/$tree.log 2>&1
+done
+EOS
+	bwrap --unshare-user --uid 0 --gid 0 --bind "$root" / --dev /dev --proc /proc --tmpfs /tmp --bind "$top" /w --chdir /w \
+		--setenv PATH /usr/bin:/bin --setenv HOME /tmp sh /w/build/package/build.sh ||
+		{ tail -20 "$work"/*.log; exit 1; }
+	cp -a "$work/prefix/." "$dst/"
+fi
+
+cp "$tools/launcher.sh" "$dst/xash3d-anniversary"
+rsync -a --include='/valve/' --include='/valve_*/' --include='/valve*/gfx/' --include='/valve*/gfx/shell/***' \
+	--include='/valve/resource/' --include='/valve/resource/mainui_*.txt' --include='/valve*/subtitles_*.txt' \
+	--exclude='*' --prune-empty-dirs "$run/" "$dst/"
+
+mkdir -p "$dst/licenses"
+cp /usr/share/common-licenses/GPL-3 "$dst/licenses/GPL-3" # the engine and the menu: GPL v3 or later
+for f in LICENSE LICENSE.md license; do
+	if [ -f "$top/hlsdk-anniversary/$f" ]; then cp "$top/hlsdk-anniversary/$f" "$dst/licenses/hlsdk-$f"; fi
+done
+cp "$tools/menu/CREDITS.md" "$dst/licenses/menu-art-CREDITS.md"
+cat > "$dst/licenses/Gamepad-Asset-Pack-LICENSE" <<'EOT'
+The pad legend's icons are rendered from AL2009man/Gamepad-Asset-Pack.
+
+MIT License
+
+Copyright (c) 2024 Al. Lopez
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+EOT
+cat > "$dst/README.txt" <<EOT
+xash3d-anniversary $version: Half-Life for Linux and the Steam Deck, with a menu made for a pad, speech subtitles
+and three render styles (Original, Software, Enhanced) that switch on the fly.
+
+You need Half-Life in Steam: nothing of the game is in this archive.
+Unpack it anywhere you can write to and run ./xash3d-anniversary. On the Deck, add that file to Steam as a
+non-Steam game. Add -gamepadui on a desktop for the pad menu; on the Deck it is the default. SDL2 comes from the system.
+
+Source: https://github.com/18woldemar/xash3d-anniversary
+Licences and where the art comes from are in licenses/. The speech captions are Fograin's Half-Life Subtitles MOD.
+EOT
+
+tar -C "$work" -czf "$out/$name-linux-amd64.tar.gz" "$name"
+du -h "$out/$name-linux-amd64.tar.gz"
