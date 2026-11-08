@@ -16,15 +16,15 @@ GNU General Public License for more details.
 
 #include "r_local.h"
 
-static cvar_t *r_xenon_showtex;
-static cvar_t *r_xenon_msaa;
+static cvar_t *r_showtex;
+static cvar_t *r_msaa;
 static float   gl3_msaa_applied = 0.0f;
-static cvar_t *r_xenon_style;
+static cvar_t *r_style;
 static float   gl3_style_applied = -1.0f;
 
 int R_GL3Style( void )
 {
-	const int style = (int)r_xenon_style->value;
+	const int style = (int)r_style->value;
 
 	return ( style < GL3_STYLE_ORIGINAL || style > GL3_STYLE_ENHANCED ) ? GL3_STYLE_ENHANCED : style;
 }
@@ -35,7 +35,7 @@ static void R_GL3ApplyStyle( int style )
 	const qboolean software = style == GL3_STYLE_SOFTWARE;
 
 	// both accelerated styles take the 4 samples the console can afford; the span renderer never had any
-	gEngfuncs.Cvar_SetValue( "r_xenon_msaa", software ? 0.0f : 4.0f );
+	gEngfuncs.Cvar_SetValue( "r_msaa", software ? 0.0f : 4.0f );
 
 	// gl_overbright lives in the accelerated renderer only: the span renderer lights through its own ramp
 	gEngfuncs.Cvar_SetValue( "gl_overbright", software ? 0.0f : 1.0f );
@@ -45,7 +45,7 @@ static void R_GL3ApplyStyle( int style )
 
 	// the ripple simulation is the one thing the span renderer did better, so our style takes it as well;
 	// the original accelerated one slid the texture with a sine instead and keeps that
-	gEngfuncs.Cvar_SetValue( "r_xenon_swwater", style == GL3_STYLE_ORIGINAL ? 0.0f : 1.0f );
+	gEngfuncs.Cvar_SetValue( "r_swwater", style == GL3_STYLE_ORIGINAL ? 0.0f : 1.0f );
 }
 
 static qboolean R_Init( void )
@@ -66,12 +66,13 @@ static qboolean R_Init( void )
 	R_GL3InitLightmaps();
 	if( !R_GL3InitStudioMeshes( ))
 		return false;
-	r_xenon_showtex = gEngfuncs.Cvar_Get( "r_xenon_showtex", "0", 0, "draw this texture number over the frame (r_xenon_texstats list shows the numbers)" );
+	r_showtex = gEngfuncs.Cvar_Get( "r_showtex", "0", 0, "draw this texture number over the frame (r_texstats list shows the numbers)" );
 	// 4x by default: clean on a TV and 60 fps on the console (2026-09-18 notes); the shot tools pass their own value
-	r_xenon_msaa = gEngfuncs.Cvar_Get( "r_xenon_msaa", "4", 0, "multisampling of the 3D view through EDRAM tiling: 0, 2 or 4 samples" );
+	r_msaa = gEngfuncs.Cvar_Get( "r_msaa", "4", 0, "multisampling of the 3D view through EDRAM tiling: 0, 2 or 4 samples" );
 	R_GL3InitFlashlight();
-	r_xenon_style = gEngfuncs.Cvar_Get( "r_xenon_style", "2", FCVAR_ARCHIVE,
+	r_style = gEngfuncs.Cvar_Get( "r_style", "2", FCVAR_ARCHIVE,
 		"render style: 0 the original accelerated renderer, 1 the software one, 2 ours" );
+	R_GL3ApplyStyle( R_GL3Style( ));
 	return true;
 }
 
@@ -96,20 +97,23 @@ static void R_BeginFrame( qboolean clearScene )
 	R_GL3EndTiledScene();
 	R_GL3TakeTiledScene();
 
-	if( r_xenon_style->value != gl3_style_applied )
+	if( r_style->value != gl3_style_applied )
 	{
-		gl3_style_applied = r_xenon_style->value;
-		R_GL3ApplyStyle( R_GL3Style( ));
+		// the first frame only takes note: the saved config and the command line have had their say over the
+		// cvars a style owns, and R_Init gave them the default style's values before that
+		if( gl3_style_applied >= 0.0f )
+			R_GL3ApplyStyle( R_GL3Style( ));
+		gl3_style_applied = r_style->value;
 		gl3_msaa_applied = -1.0f; // the scene target is the style's as well: 16 bit for the software one
 	}
 
-	if( r_xenon_msaa->value != gl3_msaa_applied )
+	if( r_msaa->value != gl3_msaa_applied )
 	{
-		gl3_msaa_applied = r_xenon_msaa->value;
+		gl3_msaa_applied = r_msaa->value;
 		if( !R_GL3SetMSAA( (int)gl3_msaa_applied ))
 		{
 			gl3_msaa_applied = 0.0f;
-			gEngfuncs.Cvar_Set( "r_xenon_msaa", "0" );
+			gEngfuncs.Cvar_Set( "r_msaa", "0" );
 		}
 	}
 
@@ -128,9 +132,9 @@ static void R_EndFrame( void )
 
 	R_GL3EndTiledScene(); // never Present inside the bracket
 
-	if( r_xenon_showtex->value > 0.0f )
+	if( r_showtex->value > 0.0f )
 	{
-		int texnum = (int)r_xenon_showtex->value;
+		int texnum = (int)r_showtex->value;
 		gl3_texture_t *tex = R_GL3GetTexture( texnum );
 
 		R_GL3SetRenderMode( kRenderNormal );

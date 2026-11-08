@@ -61,15 +61,15 @@ static struct
 	qboolean           shadowed; // this frame's map holds something
 } gl3_flashlight;
 
-static cvar_t *r_xenon_flashlight_shadows;
+static cvar_t *r_flashlight_shadows;
 
-static cvar_t *r_xenon_flashlight;
+static cvar_t *r_flashlight;
 
 void R_GL3InitFlashlight( void )
 {
-	r_xenon_flashlight = gEngfuncs.Cvar_Get( "r_xenon_flashlight", "1", FCVAR_ARCHIVE,
+	r_flashlight = gEngfuncs.Cvar_Get( "r_flashlight", "1", FCVAR_ARCHIVE,
 		"the enhanced style's projected flashlight instead of the original's dynamic light: 2 keeps it on" );
-	r_xenon_flashlight_shadows = gEngfuncs.Cvar_Get( "r_xenon_flashlight_shadows", "1", FCVAR_ARCHIVE,
+	r_flashlight_shadows = gEngfuncs.Cvar_Get( "r_flashlight_shadows", "1", FCVAR_ARCHIVE,
 		"the flashlight casts shadows: the world is drawn again from the light into a 512x512 map" );
 	gl3_flashlight.cookie = 0;
 }
@@ -123,7 +123,7 @@ static qboolean R_GL3FlashlightMakeShadowMap( void )
 	{
 		gEngfuncs.Con_Printf( S_ERROR "ref_gl3: no room for the flashlight's shadow map\n" );
 		R_GL3FreeFlashlight();
-		gEngfuncs.Cvar_Set( "r_xenon_flashlight_shadows", "0" );
+		gEngfuncs.Cvar_Set( "r_flashlight_shadows", "0" );
 		return false;
 	}
 
@@ -166,7 +166,7 @@ void R_GL3FlashlightShadow( int first, int last )
 
 	gl3_flashlight.shadowed = false;
 
-	if( !gl3_flashlight.active || !r_xenon_flashlight_shadows->value )
+	if( !gl3_flashlight.active || !r_flashlight_shadows->value )
 		return;
 
 	// The map's own surfaces live at the start of EDRAM, which belongs to the bands. Without them the
@@ -228,7 +228,7 @@ const float *R_GL3FlashlightParams( void )
 // whether a map will be built at all this frame: the models only keep their poses for one that is
 qboolean R_GL3FlashlightShadowsWanted( void )
 {
-	return gl3_flashlight.active && r_xenon_flashlight_shadows->value != 0.0f && R_GL3TiledSceneWanted( );
+	return gl3_flashlight.active && r_flashlight_shadows->value != 0.0f && R_GL3TiledSceneWanted( );
 }
 
 // the lamp itself and 1 / its range: the shaders measure the distance from it, as HL2's model path does
@@ -318,14 +318,14 @@ void R_GL3FlashlightUpdate( void )
 	gl3_flashlight.was_active = gl3_flashlight.active;
 	gl3_flashlight.active = false;
 
-	if( R_GL3Style( ) != GL3_STYLE_ENHANCED || !r_xenon_flashlight->value )
+	if( R_GL3Style( ) != GL3_STYLE_ENHANCED || !r_flashlight->value )
 		return;
 
 	if( !FBitSet( gl3_ri.rvp.flags, RF_DRAW_WORLD ) || FBitSet( gl3_ri.rvp.flags, RF_ONLY_CLIENTDRAW ))
 		return;
 
 	// 2 keeps the cone on whatever the player carries, which is how the shot tool looks at it
-	if( r_xenon_flashlight->value < 2.0f )
+	if( r_flashlight->value < 2.0f )
 	{
 		player = R_GL3EntityByIndex( gp_cl->playernum + 1 );
 		if( !player || !FBitSet( player->curstate.effects, EF_DIMLIGHT ))

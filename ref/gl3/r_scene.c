@@ -32,6 +32,12 @@ static struct
 	int x, y, width, height;
 } gl3_viewport;
 
+// ponytail: the real one is in r_studio.c, which also looks at a model's textures; this goes when that file is ported
+int R_GL3EntityRenderMode( cl_entity_t *ent )
+{
+	return ent->curstate.rendermode;
+}
+
 static void R_GL3ApplyViewport( int x, int y, int width, int height )
 {
 	R_GL3DrawReset();

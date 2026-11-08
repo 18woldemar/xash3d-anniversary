@@ -21,36 +21,21 @@ layout here: position, texture st, lightmap st) and all polygons go into one sta
 faces keep the 64-unit pieces the engine had subdivided at load and warp in the vertex shader.
 
 A frame walks the BSP as ref_gl does and collects the visible faces in texture chains. Each chain becomes
-one or more draws (one per animation frame, lightmap page and wave direction): fan indices in RAM, copied
-once per frame into one of three index buffers. The console locks a buffer only when the GPU is done with
-it, and the one used two frames ago is. That counts views, not displayed frames: the game draws one view
-per frame today, and anything that draws a second one (a mirror through rvp.nextView, the menu's player
-model through pfnRenderScene, neither of which the console build reaches) has to take the rings with it,
-here and in the dynamic lightmap pages.
+one or more draws (one per animation frame, lightmap page and wave direction): fan indices in RAM, handed to
+the index buffer once per view with a new store, so the driver never waits for the last draw.
 */
 
 #include "r_local.h"
-#include "xenonshaders/world_VS.h"
-#include "xenonshaders/warp_VS.h"
-#include "xenonshaders/warpsw_VS.h"
-#include "xenonshaders/world_PS.h"
-#include "xenonshaders/warpsw_PS.h"
-#include "xenonshaders/warpswspot_VS.h"
-#include "xenonshaders/warpswspot_PS.h"
-#include "xenonshaders/worldspot_VS.h"
-#include "xenonshaders/worldspot_PS.h"
-#include "xenonshaders/shadow_VS.h"
-#include "xenonshaders/shadow_PS.h"
+#include "world.glsl.h"
 
 #define GL3_WORLD_MAX_INDICES ( 1 << 18 )
-#define GL3_WORLD_IB_RING     3
 #define GL3_WORLD_MAX_DRAWS   4096
 #define GL3_MAX_CHAIN         16384  // faces of one texture chain split by animation frame
 #define GL3_WORLD_MAX_OBJECTS 1024   // entity matrices in a frame
 #define GL3_OBJECT_SIZE       40     // object-to-clip rows, the eye plane, the object-to-flashlight rows,
                                     // then the lamp in this object's own space
 #define GL3_SUBDIVIDE_SIZE    64
-#define GL3_MAX_DYNAMIC_VERTS 65532 // dynamic-lit faces and decals; DrawPrimitiveUP takes fewer than 65535
+#define GL3_MAX_DYNAMIC_VERTS 65532 // dynamic-lit faces and decals
 #define GL3_MAX_WATERALPHA    256
 #define GL3_POLYOFFSET_BMODELS 2.0f // the reference's gl_polyoffset_bmodels
 #define GL3_POLYOFFSET_DECALS  4.0f // the reference's gl_polyoffset
@@ -83,24 +68,15 @@ typedef struct
 	int                first, count; // indices, or dynverts
 } gl3_worlddraw_t;
 
-static const D3DVERTEXELEMENT9 gl3_world_elements[] =
-{
-	{ 0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0 },
-	{ 0, 12, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0 },
-	{ 0, 20, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1 },
-	D3DDECL_END()
-};
-
 static struct
 {
-	IDirect3DVertexShader9      *vs, *warp_vs, *warpsw_vs, *warpswspot_vs, *spot_vs, *shadow_vs;
-	IDirect3DPixelShader9       *ps, *warpsw_ps, *warpswspot_ps, *spot_ps, *shadow_ps;
-	IDirect3DVertexDeclaration9 *decl;
-	IDirect3DIndexBuffer9       *ib[GL3_WORLD_IB_RING];
-	int                          ib_current;
-	qboolean                     ib_valid; // this frame's indices reached the buffer
-	IDirect3DVertexBuffer9      *vb;
-	int                          numverts;
+	gl3_program_t *prog, *warp_prog, *warpsw_prog;
+	// ponytail: the flashlight's programs come with the flashlight (step 6 of HANDOFF); until then it is never active
+	gl3_program_t *spot_prog, *warpswspot_prog, *shadow_prog;
+	GLuint         vao, vbo, ibo;  // the map's polygons and this view's indices
+	GLuint         dyn_vao, dyn_vbo; // this view's dynamic-lit faces and decals
+	qboolean       ib_valid;       // this view's indices reached the buffer
+	int            numverts;
 
 	uint32_t       indices[GL3_WORLD_MAX_INDICES];
 	int            numindices;
@@ -133,7 +109,7 @@ static struct
 	int            skytexturenum;
 } gl3_world;
 
-static cvar_t *r_xenon_swwater;
+static cvar_t *r_swwater;
 
 /*
 ==================
@@ -176,7 +152,7 @@ static void R_GL3Cap( int cap )
 // the water of the span renderer: its field has to step even before a water surface is drawn
 qboolean R_GL3RipplesWanted( void )
 {
-	return r_xenon_swwater && r_xenon_swwater->value != 0.0f;
+	return r_swwater && r_swwater->value != 0.0f;
 }
 
 /*
@@ -330,6 +306,10 @@ void R_GL3SubdivideSurface( model_t *mod, msurface_t *fa )
 {
 	vec3_t verts[GL3_SUBDIVIDE_SIZE];
 
+	// the count comes from the map file, and the check in R_GL3SubdividePolygon would come too late
+	if( fa->numedges > GL3_SUBDIVIDE_SIZE - 4 )
+		gEngfuncs.Host_Error( "%s: too many vertexes on face ( %i )\n", __func__, fa->numedges );
+
 	for( int i = 0; i < fa->numedges; i++ )
 		R_GL3EdgePosition( mod, fa, i, verts[i] );
 
@@ -404,13 +384,6 @@ static int R_GL3SurfaceVertices( const msurface_t *fa )
 
 static void R_GL3FreeWorldBuffer( void )
 {
-	if( !gl3_world.vb )
-		return;
-
-	R_GL3DrawReset();
-	gl3_device->SetStreamSource( 0, NULL, 0, 0 );
-	gl3_world.vb->Release();
-	gl3_world.vb = NULL;
 	gl3_world.numverts = 0;
 }
 
@@ -448,13 +421,7 @@ void R_GL3WorldNewMap( void )
 	}
 
 	CL_RunLightStyles( (lightstyle_t *)ENGINE_GET_PARM( PARM_GET_LIGHTSTYLES_PTR ));
-#if XASH_XENON
-	Xenon_Phase( "new map: lightmaps" );
-#endif
 	R_GL3LightmapsNewMap();
-#if XASH_XENON
-	Xenon_Phase( "new map: surfaces" );
-#endif
 
 	for( int i = 0; i < gp_cl->nummodels; i++ )
 	{
@@ -489,18 +456,10 @@ void R_GL3WorldNewMap( void )
 	if( total == 0 )
 		return;
 
-	if( FAILED( gl3_device->CreateVertexBuffer( total * sizeof( float ) * VERTEXSIZE, 0, 0, D3DPOOL_MANAGED, &gl3_world.vb, NULL )))
-	{
-		gEngfuncs.Host_Error( "%s: can't create a vertex buffer of %d vertices\n", __func__, total );
-		return;
-	}
+	R_GL3DrawReset();
+	glBindBuffer( GL_ARRAY_BUFFER, gl3_world.vbo );
+	glBufferData( GL_ARRAY_BUFFER, total * sizeof( float ) * VERTEXSIZE, NULL, GL_STATIC_DRAW );
 
-	// the polygon vertex is the buffer's vertex; locked memory only takes the streaming copy
-	if( FAILED( gl3_world.vb->Lock( 0, 0, (void **)&dst, 0 )))
-	{
-		gEngfuncs.Host_Error( "%s: can't lock the world vertex buffer\n", __func__ );
-		return;
-	}
 	for( int i = 0; i < gp_cl->nummodels; i++ )
 	{
 		model_t *m = gp_cl->models[i + 1];
@@ -513,12 +472,12 @@ void R_GL3WorldNewMap( void )
 			for( glpoly2_t *p = m->surfaces[j].polys; p; p = p->next )
 			{
 				const size_t bytes = p->numverts * VERTEXSIZE * sizeof( float );
-				XMemCpyStreaming_WriteCombined( dst + filled, p->verts[0], bytes );
+
+				glBufferSubData( GL_ARRAY_BUFFER, filled, bytes, p->verts[0] );
 				filled += bytes;
 			}
 		}
 	}
-	gl3_world.vb->Unlock();
 
 	gl3_world.numverts = total;
 	gEngfuncs.Con_Reportf( "ref_gl3: world vertex buffer %d vertices, %d KB\n", total, filled >> 10 );
@@ -935,8 +894,8 @@ static void R_GL3EmitDecals( msurface_t *s, int page, const float *lm, const gl3
 		if( numverts < 3 )
 			continue;
 
-		decal_states.src = premultiplied ? D3DBLEND_ONE : D3DBLEND_SRCALPHA;
-		decal_states.dst = D3DBLEND_INVSRCALPHA;
+		decal_states.src = premultiplied ? GL_ONE : GL_SRC_ALPHA;
+		decal_states.dst = GL_ONE_MINUS_SRC_ALPHA;
 
 		// the previous decal draw goes on when nothing differs
 		if( gl3_world.numdraws > gl3_world.object_first_draw )
@@ -1001,14 +960,14 @@ static void R_GL3DecalStates( gl3_states_t *st, qboolean single )
 	{
 	case kRenderNormal:
 	case kRenderTransAlpha:
-		st->blend = TRUE;
-		st->zwrite = FALSE;
+		st->blend = true;
+		st->zwrite = false;
 		if( single )
-			st->alphatest = FALSE;
+			st->alphatest = false;
 		break;
 	case kRenderTransTexture:
 	case kRenderTransAdd:
-		st->cull = D3DCULL_NONE;
+		st->cull = GL3_CULL_NONE;
 		break;
 	}
 }
@@ -1265,13 +1224,13 @@ int R_GL3WorldDrawCount( void )
 void R_GL3DefaultStates( gl3_states_t *st )
 {
 	memset( st, 0, sizeof( *st ));
-	st->blend = FALSE;
-	st->src = D3DBLEND_ONE;
-	st->dst = D3DBLEND_ZERO;
-	st->alphatest = FALSE;
-	st->zwrite = TRUE;
-	st->ztest = TRUE;
-	st->zfunc = D3DCMP_LESSEQUAL;
+	st->blend = false;
+	st->src = GL_ONE;
+	st->dst = GL_ZERO;
+	st->alphatest = false;
+	st->zwrite = true;
+	st->ztest = true;
+	st->zfunc = GL_LEQUAL;
 	st->cull = GL3_CULL_FRONT;
 	st->alpharef = 0;
 }
@@ -1349,10 +1308,10 @@ void R_GL3CollectWaterAlpha( void )
 	R_GL3WorldNewObject();
 
 	R_GL3DefaultStates( &st );
-	st.blend = TRUE;
-	st.src = D3DBLEND_SRCALPHA;
-	st.dst = D3DBLEND_INVSRCALPHA;
-	st.zwrite = FALSE;
+	st.blend = true;
+	st.src = GL_SRC_ALPHA;
+	st.dst = GL_ONE_MINUS_SRC_ALPHA;
+	st.zwrite = false;
 	R_GL3WorldSetState( &st, color );
 	gl3_world.untextured = false;
 
@@ -1389,35 +1348,35 @@ static void R_GL3BrushRenderMode( const cl_entity_t *e )
 	case kRenderNormal:
 		break;
 	case kRenderTransColor:
-		st.blend = TRUE;
-		st.src = D3DBLEND_SRCALPHA;
-		st.dst = D3DBLEND_INVSRCALPHA;
+		st.blend = true;
+		st.src = GL_SRC_ALPHA;
+		st.dst = GL_ONE_MINUS_SRC_ALPHA;
 		Vector4Set( color, e->curstate.rendercolor.r / 255.0f, e->curstate.rendercolor.g / 255.0f, e->curstate.rendercolor.b / 255.0f, e->curstate.renderamt / 255.0f );
 		gl3_world.untextured = true;
 		break;
 	case kRenderTransAdd:
-		st.blend = TRUE;
-		st.src = D3DBLEND_ONE;
-		st.dst = D3DBLEND_ONE;
-		st.zwrite = FALSE;
+		st.blend = true;
+		st.src = GL_ONE;
+		st.dst = GL_ONE;
+		st.zwrite = false;
 		Vector4Set( color, gl3_tr.blend, gl3_tr.blend, gl3_tr.blend, 1.0f );
 		break;
 	case kRenderTransAlpha:
-		st.alphatest = TRUE;
+		st.alphatest = true;
 		st.alpharef = 64; // GL_GREATER 0.25
 		if( FBitSet( gp_host->features, ENGINE_QUAKE_COMPATIBLE ))
 		{
-			st.blend = TRUE;
-			st.src = D3DBLEND_SRCALPHA;
-			st.dst = D3DBLEND_INVSRCALPHA;
+			st.blend = true;
+			st.src = GL_SRC_ALPHA;
+			st.dst = GL_ONE_MINUS_SRC_ALPHA;
 			color[3] = gl3_tr.blend;
 		}
 		break;
 	default:
-		st.blend = TRUE;
-		st.src = D3DBLEND_SRCALPHA;
-		st.dst = D3DBLEND_INVSRCALPHA;
-		st.zwrite = FALSE;
+		st.blend = true;
+		st.src = GL_SRC_ALPHA;
+		st.dst = GL_ONE_MINUS_SRC_ALPHA;
+		st.zwrite = false;
 		color[3] = gl3_tr.blend;
 		break;
 	}
@@ -1456,7 +1415,7 @@ void R_GL3CollectBrushModel( cl_entity_t *e )
 	gl3_states_t decal_states;
 	int num_sorted = 0;
 
-	if( !FBitSet( gl3_ri.rvp.flags, RF_DRAW_WORLD ) || !gl3_world.vb )
+	if( !FBitSet( gl3_ri.rvp.flags, RF_DRAW_WORLD ) || !gl3_world.numverts )
 		return;
 
 	// A brush entity carries an inline model of the map ("*12"). An entity that somehow carries the map
@@ -1666,34 +1625,19 @@ static void R_GL3CheckDraws( void )
 
 void R_GL3WorldUpload( void )
 {
-	IDirect3DIndexBuffer9 *ib;
-	void *dst;
-
 	R_GL3CheckDraws();
 	R_GL3LightmapsCommit();
 	gl3_world.ib_valid = false;
 
-	if( !gl3_world.numindices )
+	if( !gl3_world.numindices && !gl3_world.numdynverts )
 		return;
 
-	gl3_world.ib_current = ( gl3_world.ib_current + 1 ) % GL3_WORLD_IB_RING;
-	ib = gl3_world.ib[gl3_world.ib_current];
-
+	// a new store each time: the driver hands out fresh memory instead of waiting for the last view
 	R_GL3DrawReset();
-	gl3_device->SetIndices( NULL );
-	if( FAILED( ib->Lock( 0, 0, &dst, 0 )))
-	{
-		// keep the ring where it was. The buffer it holds belongs to an earlier frame, and this frame's
-		// draws point into this frame's indices, so drawing from it would put other faces of the map on
-		// the screen: the indexed draws are skipped instead, and the frame loses the world.
-		gl3_world.ib_current = ( gl3_world.ib_current + GL3_WORLD_IB_RING - 1 ) % GL3_WORLD_IB_RING;
-		if( !gl3_world.overflow )
-			gEngfuncs.Con_Printf( S_ERROR "ref_gl3: can't lock the world index buffer\n" );
-		gl3_world.overflow = true;
-		return;
-	}
-	XMemCpyStreaming_WriteCombined( dst, gl3_world.indices, gl3_world.numindices * sizeof( *gl3_world.indices ));
-	ib->Unlock();
+	glBindVertexArray( gl3_world.vao );
+	glBufferData( GL_ELEMENT_ARRAY_BUFFER, gl3_world.numindices * sizeof( *gl3_world.indices ), gl3_world.indices, GL_STREAM_DRAW );
+	glBindBuffer( GL_ARRAY_BUFFER, gl3_world.dyn_vbo );
+	glBufferData( GL_ARRAY_BUFFER, gl3_world.numdynverts * sizeof( gl3_world.dynverts[0] ), gl3_world.dynverts, GL_STREAM_DRAW );
 	gl3_world.ib_valid = true;
 }
 
@@ -1709,15 +1653,13 @@ cast nothing in the original either, and a decal sits on the face that already c
 void R_GL3WorldShadowRange( int first, int last )
 {
 	int object = -1;
-	qboolean streams = false;
 
-	if( first >= last || !gl3_world.vb || !gl3_world.ib_valid )
+	if( first >= last || !gl3_world.numverts || !gl3_world.ib_valid )
 		return;
 
 	R_GL3DrawReset();
-	gl3_device->SetVertexDeclaration( gl3_world.decl );
-	gl3_device->SetVertexShader( gl3_world.shadow_vs );
-	gl3_device->SetPixelShader( gl3_world.shadow_ps );
+	R_GL3UseProgram( gl3_world.shadow_prog );
+	glBindVertexArray( gl3_world.vao );
 
 	for( int i = first; i < last; i++ )
 	{
@@ -1729,17 +1671,11 @@ void R_GL3WorldShadowRange( int first, int last )
 		if( d->object != object )
 		{
 			object = d->object;
-			gl3_device->SetVertexShaderConstantF( 8, gl3_world.objects[object] + 20, 4 );
+			R_GL3SetVSConstants( 8, gl3_world.objects[object] + 20, 4 );
 		}
 
-		if( !streams )
-		{
-			gl3_device->SetStreamSource( 0, gl3_world.vb, 0, sizeof( float ) * VERTEXSIZE );
-			gl3_device->SetIndices( gl3_world.ib[gl3_world.ib_current] );
-			streams = true;
-		}
-
-		gl3_device->DrawIndexedPrimitive( D3DPT_TRIANGLELIST, 0, 0, gl3_world.numverts, d->first, d->count / 3 );
+		R_GL3CommitConstants();
+		glDrawElements( GL_TRIANGLES, d->count, GL_UNSIGNED_INT, (void *)( d->first * sizeof( uint32_t )));
 		R_GL3CountDraw( d->count );
 	}
 
@@ -1748,26 +1684,23 @@ void R_GL3WorldShadowRange( int first, int last )
 
 void R_GL3DrawWorldRange( int first, int last )
 {
-	IDirect3DVertexShader9 *vs = NULL;
-	IDirect3DPixelShader9 *ps = NULL;
-	const qboolean swwater = r_xenon_swwater->value != 0.0f;
+	const qboolean swwater = r_swwater->value != 0.0f;
 	const qboolean flashlight = R_GL3FlashlightActive( );
 	const float *color = NULL, *fog = NULL;
 	float lmscale[4] = { -1.0f, 0.0f, 0.0f, 0.0f };
 	int object = -1;
-	qboolean streams = false; // DrawPrimitiveUP unsets them
+	GLuint vao = 0;
 
-	if( first >= last || !gl3_world.vb )
+	if( first >= last || !gl3_world.numverts )
 		return;
 
 	R_GL3DrawReset();
-	gl3_device->SetVertexDeclaration( gl3_world.decl );
 
 	if( flashlight )
 	{
 		R_GL3BindCookie( R_GL3FlashlightCookie( ));
 		R_GL3BindShadowMap( R_GL3FlashlightShadowed( ) ? R_GL3FlashlightShadowMap( ) : gl3_white_texture );
-		gl3_device->SetPixelShaderConstantF( 4, R_GL3FlashlightParams( ), 1 );
+		R_GL3SetPSConstants( 4, R_GL3FlashlightParams( ), 1 );
 	}
 
 	for( int i = first; i < last; i++ )
@@ -1782,24 +1715,11 @@ void R_GL3DrawWorldRange( int first, int last )
 		// the flashlight lights plain surfaces, and water through the pair that carries its own warp. The
 		// sine water of the original style is left out: that style has no flashlight to light it with.
 		const qboolean spot = flashlight && ( !d->warp || soft );
-		IDirect3DVertexShader9 *want = d->warp
-			? ( soft ? ( spot ? gl3_world.warpswspot_vs : gl3_world.warpsw_vs ) : gl3_world.warp_vs )
-			: ( spot ? gl3_world.spot_vs : gl3_world.vs );
-		IDirect3DPixelShader9 *want_ps = soft ? ( spot ? gl3_world.warpswspot_ps : gl3_world.warpsw_ps )
-			: ( spot ? gl3_world.spot_ps : gl3_world.ps );
 		float constants[8];
 
-		if( want != vs )
-		{
-			vs = want;
-			gl3_device->SetVertexShader( vs );
-		}
-
-		if( want_ps != ps )
-		{
-			ps = want_ps;
-			gl3_device->SetPixelShader( ps );
-		}
+		R_GL3UseProgram( d->warp
+			? ( soft ? ( spot ? gl3_world.warpswspot_prog : gl3_world.warpsw_prog ) : gl3_world.warp_prog )
+			: ( spot ? gl3_world.spot_prog : gl3_world.prog ));
 
 		// the software water reads its ripple field from sampler 2; the field itself steps once a frame
 		if( soft )
@@ -1808,25 +1728,25 @@ void R_GL3DrawWorldRange( int first, int last )
 		if( d->object != object )
 		{
 			object = d->object;
-			gl3_device->SetVertexShaderConstantF( 0, gl3_world.objects[object], 4 );
-			gl3_device->SetVertexShaderConstantF( 6, gl3_world.objects[object] + 16, 1 );
+			R_GL3SetVSConstants( 0, gl3_world.objects[object], 4 );
+			R_GL3SetVSConstants( 6, gl3_world.objects[object] + 16, 1 );
 			if( flashlight )
 			{
-				gl3_device->SetVertexShaderConstantF( 8, gl3_world.objects[object] + 20, 4 );
-				gl3_device->SetPixelShaderConstantF( 5, gl3_world.objects[object] + 36, 1 );
+				R_GL3SetVSConstants( 8, gl3_world.objects[object] + 20, 4 );
+				R_GL3SetPSConstants( 5, gl3_world.objects[object] + 36, 1 );
 			}
 		}
 
 		if( !fog || memcmp( fog, d->fog, sizeof( d->fog )))
 		{
 			fog = d->fog;
-			gl3_device->SetPixelShaderConstantF( 1, fog, 2 );
+			R_GL3SetPSConstants( 1, fog, 2 );
 		}
 
 		if( !color || memcmp( color, d->color, sizeof( d->color )))
 		{
 			color = d->color;
-			gl3_device->SetPixelShaderConstantF( 0, color, 1 );
+			R_GL3SetPSConstants( 0, color, 1 );
 		}
 
 		if( memcmp( &gl3_wanted, &d->states, sizeof( d->states )))
@@ -1841,7 +1761,7 @@ void R_GL3DrawWorldRange( int first, int last )
 		constants[4] = (float)gp_cl->time;
 		constants[5] = d->waveheight;
 		constants[6] = constants[7] = 0.0f;
-		gl3_device->SetVertexShaderConstantF( 4, constants, 2 );
+		R_GL3SetVSConstants( 4, constants, 2 );
 
 		// r_lightmap shows the lightmaps alone
 		R_GL3BindTexture( d->lightmap >= 0 && r_lightmap->value ? gl3_white_texture : d->texture );
@@ -1852,27 +1772,26 @@ void R_GL3DrawWorldRange( int first, int last )
 		if( lmscale[0] != scale )
 		{
 			lmscale[0] = scale;
-			gl3_device->SetPixelShaderConstantF( 3, lmscale, 1 );
+			R_GL3SetPSConstants( 3, lmscale, 1 );
 		}
 
-		if( d->up )
-		{
-			gl3_device->DrawPrimitiveUP( D3DPT_TRIANGLELIST, d->count / 3, gl3_world.dynverts[d->first], sizeof( float ) * VERTEXSIZE );
-			streams = false;
-		}
-		else
-		{
-			if( !gl3_world.ib_valid )
-				continue;
+		if( !gl3_world.ib_valid )
+			continue;
 
-			if( !streams )
+		{
+			const GLuint want = d->up ? gl3_world.dyn_vao : gl3_world.vao;
+
+			if( want != vao )
 			{
-				gl3_device->SetStreamSource( 0, gl3_world.vb, 0, sizeof( float ) * VERTEXSIZE );
-				gl3_device->SetIndices( gl3_world.ib[gl3_world.ib_current] );
-				streams = true;
+				vao = want;
+				glBindVertexArray( vao );
 			}
-			gl3_device->DrawIndexedPrimitive( D3DPT_TRIANGLELIST, 0, 0, gl3_world.numverts, d->first, d->count / 3 );
 		}
+
+		R_GL3CommitConstants();
+		if( d->up )
+			glDrawArrays( GL_TRIANGLES, d->first, d->count );
+		else glDrawElements( GL_TRIANGLES, d->count, GL_UNSIGNED_INT, (void *)( d->first * sizeof( uint32_t )));
 		R_GL3CountDraw( d->count );
 	}
 
@@ -1908,39 +1827,47 @@ INIT
 
 ==============================================================================
 */
+// position, texture st, lightmap st of a polygon vertex (the engine's glvert2_t), for the bound vertex array
+static void R_GL3WorldVertexLayout( GLuint vbo )
+{
+	const GLsizei stride = sizeof( float ) * VERTEXSIZE;
+
+	glBindBuffer( GL_ARRAY_BUFFER, vbo );
+	glEnableVertexAttribArray( GL3_ATTR_POSITION );
+	glVertexAttribPointer( GL3_ATTR_POSITION, 3, GL_FLOAT, GL_FALSE, stride, (void *)0 );
+	glEnableVertexAttribArray( GL3_ATTR_TEXCOORD );
+	glVertexAttribPointer( GL3_ATTR_TEXCOORD, 2, GL_FLOAT, GL_FALSE, stride, (void *)( 3 * sizeof( float )));
+	glEnableVertexAttribArray( GL3_ATTR_LIGHTCOORD );
+	glVertexAttribPointer( GL3_ATTR_LIGHTCOORD, 2, GL_FLOAT, GL_FALSE, stride, (void *)( 5 * sizeof( float )));
+}
+
 qboolean R_GL3InitWorld( void )
 {
 	// ref_gl warps water once per vertex on the 64-unit grid the engine subdivides it into, which slides the
 	// texture; the software renderer left the geometry alone and animated the texture through a ripple
 	// simulation instead (r_ripple.c). Both are here, and the render style picks one.
-	r_xenon_swwater = gEngfuncs.Cvar_Get( "r_xenon_swwater", "0", FCVAR_ARCHIVE,
+	r_swwater = gEngfuncs.Cvar_Get( "r_swwater", "0", FCVAR_ARCHIVE,
 		"animate water the way the software renderer did: the 128x128 ripple field it simulated" );
 
-	if( FAILED( gl3_device->CreateVertexShader( g_shadow_VS, &gl3_world.shadow_vs ))
-		|| FAILED( gl3_device->CreatePixelShader( g_shadow_PS, &gl3_world.shadow_ps ))
-		|| FAILED( gl3_device->CreateVertexShader( g_worldspot_VS, &gl3_world.spot_vs ))
-		|| FAILED( gl3_device->CreatePixelShader( g_worldspot_PS, &gl3_world.spot_ps ))
-		|| FAILED( gl3_device->CreateVertexShader( g_world_VS, &gl3_world.vs ))
-		|| FAILED( gl3_device->CreateVertexShader( g_warp_VS, &gl3_world.warp_vs ))
-		|| FAILED( gl3_device->CreateVertexShader( g_warpsw_VS, &gl3_world.warpsw_vs ))
-		|| FAILED( gl3_device->CreatePixelShader( g_world_PS, &gl3_world.ps ))
-		|| FAILED( gl3_device->CreatePixelShader( g_warpsw_PS, &gl3_world.warpsw_ps ))
-		|| FAILED( gl3_device->CreateVertexShader( g_warpswspot_VS, &gl3_world.warpswspot_vs ))
-		|| FAILED( gl3_device->CreatePixelShader( g_warpswspot_PS, &gl3_world.warpswspot_ps ))
-		|| FAILED( gl3_device->CreateVertexDeclaration( gl3_world_elements, &gl3_world.decl )))
-	{
-		gEngfuncs.Con_Printf( S_ERROR "ref_gl3: can't create the world shaders\n" );
+	gl3_world.prog = R_GL3CreateProgram( "world", world_glsl, NULL );
+	gl3_world.warp_prog = R_GL3CreateProgram( "world", world_glsl, "#define WARP 1\n" );
+	gl3_world.warpsw_prog = R_GL3CreateProgram( "world", world_glsl, "#define WARP_SW 1\n" );
+	if( !gl3_world.prog || !gl3_world.warp_prog || !gl3_world.warpsw_prog )
 		return false;
-	}
 
-	for( int i = 0; i < GL3_WORLD_IB_RING; i++ )
-	{
-		if( FAILED( gl3_device->CreateIndexBuffer( GL3_WORLD_MAX_INDICES * sizeof( uint32_t ), 0, D3DFMT_INDEX32, D3DPOOL_MANAGED, &gl3_world.ib[i], NULL )))
-		{
-			gEngfuncs.Con_Printf( S_ERROR "ref_gl3: can't create the world index buffers\n" );
-			return false;
-		}
-	}
+	glGenVertexArrays( 1, &gl3_world.vao );
+	glGenVertexArrays( 1, &gl3_world.dyn_vao );
+	glGenBuffers( 1, &gl3_world.vbo );
+	glGenBuffers( 1, &gl3_world.ibo );
+	glGenBuffers( 1, &gl3_world.dyn_vbo );
+
+	glBindVertexArray( gl3_world.vao );
+	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, gl3_world.ibo );
+	R_GL3WorldVertexLayout( gl3_world.vbo );
+	glBindVertexArray( gl3_world.dyn_vao );
+	R_GL3WorldVertexLayout( gl3_world.dyn_vbo );
+	glBindVertexArray( 0 );
+	R_GL3DrawReset();
 
 	gl3_world.skytexturenum = -1;
 	return true;
@@ -1948,45 +1875,13 @@ qboolean R_GL3InitWorld( void )
 
 void R_GL3ShutdownWorld( void )
 {
-	if( !gl3_device )
-		return;
-
 	R_GL3FreeWorldBuffer();
 	R_GL3DrawReset();
-	gl3_device->SetIndices( NULL );
-	gl3_device->SetVertexShader( NULL );
-	gl3_device->SetPixelShader( NULL );
-	gl3_device->SetVertexDeclaration( NULL );
-
-	for( int i = 0; i < GL3_WORLD_IB_RING; i++ )
-	{
-		if( gl3_world.ib[i] )
-			gl3_world.ib[i]->Release();
-		gl3_world.ib[i] = NULL;
-	}
-
-	if( gl3_world.decl ) gl3_world.decl->Release();
-	if( gl3_world.ps ) gl3_world.ps->Release();
-	if( gl3_world.shadow_ps ) gl3_world.shadow_ps->Release();
-	if( gl3_world.shadow_vs ) gl3_world.shadow_vs->Release();
-	if( gl3_world.spot_ps ) gl3_world.spot_ps->Release();
-	if( gl3_world.spot_vs ) gl3_world.spot_vs->Release();
-	if( gl3_world.warpsw_ps ) gl3_world.warpsw_ps->Release();
-	if( gl3_world.warp_vs ) gl3_world.warp_vs->Release();
-	if( gl3_world.warpsw_vs ) gl3_world.warpsw_vs->Release();
-	if( gl3_world.warpswspot_ps ) gl3_world.warpswspot_ps->Release();
-	if( gl3_world.warpswspot_vs ) gl3_world.warpswspot_vs->Release();
-	gl3_world.warpswspot_ps = NULL;
-	gl3_world.warpswspot_vs = NULL;
-	if( gl3_world.vs ) gl3_world.vs->Release();
-	gl3_world.decl = NULL;
-	gl3_world.ps = NULL;
-	gl3_world.shadow_ps = NULL;
-	gl3_world.shadow_vs = NULL;
-	gl3_world.spot_ps = NULL;
-	gl3_world.spot_vs = NULL;
-	gl3_world.warpsw_ps = NULL;
-	gl3_world.warp_vs = NULL;
-	gl3_world.warpsw_vs = NULL;
-	gl3_world.vs = NULL;
+	glBindVertexArray( 0 );
+	glDeleteVertexArrays( 1, &gl3_world.vao );
+	glDeleteVertexArrays( 1, &gl3_world.dyn_vao );
+	glDeleteBuffers( 1, &gl3_world.vbo );
+	glDeleteBuffers( 1, &gl3_world.ibo );
+	glDeleteBuffers( 1, &gl3_world.dyn_vbo );
+	gl3_world.vao = gl3_world.dyn_vao = gl3_world.vbo = gl3_world.ibo = gl3_world.dyn_vbo = 0;
 }

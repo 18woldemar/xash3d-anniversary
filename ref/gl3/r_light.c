@@ -17,13 +17,10 @@ GNU General Public License for more details.
 
 /*
 Luxels are ref_gl's: styles summed, scaled, through the light gamma table. Pages are 1024 luxels square and
-kept in RAM; each page has two textures. A light style change rebuilds its faces into the RAM page and
-leaves a dirty rectangle for both textures. Each frame the texture the previous frame did not use takes its
-rectangles and becomes the one to draw with: a lock waits for the GPU to finish with a texture, and the
-idle one is finished.
+kept in RAM; each page has one texture. A light style change rebuilds its faces into the RAM page and
+leaves a dirty rectangle, which the texture takes before the frame draws.
 
-Faces lit by dynamic lights are rebuilt every frame into a 512-luxel page of their own (three textures in
-turn) and drawn from vertices with lightmap coordinates moved to that page, as ref_gl's R_BlendLightmaps
+Faces lit by dynamic lights are rebuilt every frame into a 512-luxel page of their own and drawn from vertices with lightmap coordinates moved to that page, as ref_gl's R_BlendLightmaps
 does with its dlight block.
 */
 
@@ -33,7 +30,6 @@ does with its dlight block.
 #define GL3_MAX_PAGES        16
 #define GL3_PAGE_RECTS       64
 #define GL3_DLIGHT_SIZE      512
-#define GL3_DLIGHT_RING      3
 #define GL3_MAX_LUXELS       ( 256 * 256 ) // one face
 
 typedef struct
@@ -43,7 +39,7 @@ typedef struct
 
 typedef struct
 {
-	IDirect3DTexture9 *d3d;
+	GLuint             tex;
 	gl3_rect_t          rects[GL3_PAGE_RECTS];
 	int                numrects;
 	qboolean           whole; // too many rectangles: the whole page
@@ -52,8 +48,7 @@ typedef struct
 typedef struct
 {
 	uint32_t     *luxels; // GL3_LIGHTMAP_SIZE squared, native 0xAARRGGBB
-	gl3_pagecopy_t copies[2];
-	int           current;
+	gl3_pagecopy_t copy;
 } gl3_page_t;
 
 static cvar_t *gl_overbright;
@@ -70,8 +65,7 @@ static struct
 	// dynamic lights
 	atlas_t            datlas;
 	uint32_t           dluxels[GL3_DLIGHT_SIZE * GL3_DLIGHT_SIZE];
-	IDirect3DTexture9 *dtextures[GL3_DLIGHT_RING];
-	int                dcurrent;
+	GLuint             dtexture;
 	qboolean           dused;
 	qboolean           dfull;
 } gl3_lm;
@@ -325,25 +319,17 @@ static void R_GL3Dirty( gl3_pagecopy_t *copy, int x, int y, int w, int h )
 
 static void R_GL3DirtyPage( int page, int x, int y, int w, int h )
 {
-	R_GL3Dirty( &gl3_lm.pages[page].copies[0], x, y, w, h );
-	R_GL3Dirty( &gl3_lm.pages[page].copies[1], x, y, w, h );
+	R_GL3Dirty( &gl3_lm.pages[page].copy, x, y, w, h );
 }
 
-static void R_GL3WriteRows( IDirect3DTexture9 *d3d, const uint32_t *luxels, int size, const gl3_rect_t *rects, int numrects, qboolean whole )
+static void R_GL3WriteRows( GLuint tex, const uint32_t *luxels, int size, const gl3_rect_t *rects, int numrects, qboolean whole )
 {
-	D3DLOCKED_RECT lr;
-
-	R_GL3UnbindD3D( d3d );
-	if( FAILED( d3d->LockRect( 0, &lr, NULL, D3DLOCK_NOSYSLOCK )))
-	{
-		gEngfuncs.Con_Printf( S_ERROR "%s: can't lock a lightmap\n", __func__ );
-		return;
-	}
+	glBindTexture( GL_TEXTURE_2D, tex );
+	glPixelStorei( GL_UNPACK_ROW_LENGTH, size );
 
 	if( whole )
 	{
-		for( int y = 0; y < size; y++ )
-			XMemCpyStreaming_WriteCombined((byte *)lr.pBits + y * lr.Pitch, luxels + y * size, size * sizeof( *luxels ));
+		glTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, size, size, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, luxels );
 	}
 	else
 	{
@@ -351,21 +337,28 @@ static void R_GL3WriteRows( IDirect3DTexture9 *d3d, const uint32_t *luxels, int 
 		{
 			const gl3_rect_t *r = &rects[i];
 
-			for( int y = r->y; y < r->y + r->h; y++ )
-				XMemCpyStreaming_WriteCombined((byte *)lr.pBits + y * lr.Pitch + r->x * sizeof( *luxels ), luxels + y * size + r->x, r->w * sizeof( *luxels ));
+			glTexSubImage2D( GL_TEXTURE_2D, 0, r->x, r->y, r->w, r->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, luxels + r->y * size + r->x );
 		}
 	}
 
-	d3d->UnlockRect( 0 );
+	glPixelStorei( GL_UNPACK_ROW_LENGTH, 0 );
+	R_GL3ForgetBindings();
 }
 
-static IDirect3DTexture9 *R_GL3CreateLightmapTexture( int size )
+static GLuint R_GL3CreateLightmapTexture( int size )
 {
-	IDirect3DTexture9 *d3d = NULL;
+	GLuint tex = 0;
 
-	if( FAILED( gl3_device->CreateTexture( size, size, 1, 0, D3DFMT_LIN_X8R8G8B8, D3DPOOL_MANAGED, &d3d, NULL )))
-		gEngfuncs.Host_Error( "ref_gl3: can't create a %dx%d lightmap\n", size, size );
-	return d3d;
+	glGenTextures( 1, &tex );
+	glBindTexture( GL_TEXTURE_2D, tex );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
+	R_GL3ForgetBindings();
+	return tex;
 }
 
 static void R_GL3NewPage( void )
@@ -382,15 +375,11 @@ static void R_GL3NewPage( void )
 	// unused luxels stay dark, like the reused buffer of ref_gl never reaches a face
 	memset( page->luxels, 0, GL3_LIGHTMAP_SIZE * GL3_LIGHTMAP_SIZE * sizeof( *page->luxels ));
 
-	for( int i = 0; i < 2; i++ )
-	{
-		if( !page->copies[i].d3d )
-			page->copies[i].d3d = R_GL3CreateLightmapTexture( GL3_LIGHTMAP_SIZE );
-		page->copies[i].numrects = 0;
-		page->copies[i].whole = true;
-	}
+	if( !page->copy.tex )
+		page->copy.tex = R_GL3CreateLightmapTexture( GL3_LIGHTMAP_SIZE );
+	page->copy.numrects = 0;
+	page->copy.whole = true;
 
-	page->current = 0;
 	Atlas_Init( &gl3_lm.atlas, GL3_LIGHTMAP_SIZE );
 }
 
@@ -398,7 +387,6 @@ void R_GL3LightmapsNewMap( void )
 {
 	gl3_lm.numpages = 0;
 	gl3_lm.lightgammatable = (const uint16_t *)ENGINE_GET_PARM( PARM_GET_LIGHTGAMMATABLE_PTR );
-	gl3_lm.dcurrent = 0;
 	gl3_lm.dfull = false; // each map says once that its dynamic lights outgrew the page
 }
 
@@ -463,11 +451,8 @@ void R_GL3RebuildLightmaps( void )
 
 	for( int i = 0; i < gl3_lm.numpages; i++ )
 	{
-		for( int j = 0; j < 2; j++ )
-		{
-			gl3_lm.pages[i].copies[j].whole = true;
-			gl3_lm.pages[i].copies[j].numrects = 0;
-		}
+		gl3_lm.pages[i].copy.whole = true;
+		gl3_lm.pages[i].copy.numrects = 0;
 	}
 }
 
@@ -573,19 +558,13 @@ void R_GL3LightmapsCommit( void )
 	for( int i = 0; i < gl3_lm.numpages; i++ )
 	{
 		gl3_page_t *page = &gl3_lm.pages[i];
-		const int idle = page->current ^ 1;
-		gl3_pagecopy_t *copy = &page->copies[idle];
+		gl3_pagecopy_t *copy = &page->copy;
 
 		if( copy->whole || copy->numrects )
 		{
-			R_GL3WriteRows( copy->d3d, page->luxels, GL3_LIGHTMAP_SIZE, copy->rects, copy->numrects, copy->whole );
+			R_GL3WriteRows( copy->tex, page->luxels, GL3_LIGHTMAP_SIZE, copy->rects, copy->numrects, copy->whole );
 			copy->whole = false;
 			copy->numrects = 0;
-			page->current = idle;
-		}
-		else if( page->copies[page->current].whole || page->copies[page->current].numrects )
-		{
-			page->current = idle; // the idle copy is up to date
 		}
 	}
 
@@ -593,20 +572,19 @@ void R_GL3LightmapsCommit( void )
 	{
 		gl3_rect_t used = { 0, 0, GL3_DLIGHT_SIZE, (short)gl3_lm.datlas.max_height };
 
-		gl3_lm.dcurrent = ( gl3_lm.dcurrent + 1 ) % GL3_DLIGHT_RING;
-		R_GL3WriteRows( gl3_lm.dtextures[gl3_lm.dcurrent], gl3_lm.dluxels, GL3_DLIGHT_SIZE, &used, 1, false );
+		R_GL3WriteRows( gl3_lm.dtexture, gl3_lm.dluxels, GL3_DLIGHT_SIZE, &used, 1, false );
 	}
 }
 
-IDirect3DTexture9 *R_GL3LightmapTexture( int page )
+GLuint R_GL3LightmapTexture( int page )
 {
 	if( page == GL3_LIGHTMAP_DYNAMIC )
-		return gl3_lm.dtextures[gl3_lm.dcurrent];
+		return gl3_lm.dtexture;
 
 	if( page < 0 || page >= gl3_lm.numpages )
-		return NULL;
+		return 0;
 
-	return gl3_lm.pages[page].copies[gl3_lm.pages[page].current].d3d;
+	return gl3_lm.pages[page].copy.tex;
 }
 
 /*
@@ -637,34 +615,19 @@ void R_GL3InitLightmaps( void )
 	gl_overbright = gEngfuncs.Cvar_Get( "gl_overbright", "0", FCVAR_ARCHIVE, "overbrights" );
 	gl3_overbright_applied = gl_overbright->value;
 	gl3_lm.pool = Mem_AllocPool( "ref_gl3 lightmaps" );
-	for( int i = 0; i < GL3_DLIGHT_RING; i++ )
-		gl3_lm.dtextures[i] = R_GL3CreateLightmapTexture( GL3_DLIGHT_SIZE );
+	gl3_lm.dtexture = R_GL3CreateLightmapTexture( GL3_DLIGHT_SIZE );
 }
 
 void R_GL3ShutdownLightmaps( void )
 {
 	for( int i = 0; i < GL3_MAX_PAGES; i++ )
 	{
-		for( int j = 0; j < 2; j++ )
-		{
-			IDirect3DTexture9 *d3d = gl3_lm.pages[i].copies[j].d3d;
-
-			if( d3d )
-			{
-				R_GL3UnbindD3D( d3d );
-				d3d->Release();
-			}
-		}
+		if( gl3_lm.pages[i].copy.tex )
+			glDeleteTextures( 1, &gl3_lm.pages[i].copy.tex );
 	}
 
-	for( int i = 0; i < GL3_DLIGHT_RING; i++ )
-	{
-		if( gl3_lm.dtextures[i] )
-		{
-			R_GL3UnbindD3D( gl3_lm.dtextures[i] );
-			gl3_lm.dtextures[i]->Release();
-		}
-	}
+	if( gl3_lm.dtexture )
+		glDeleteTextures( 1, &gl3_lm.dtexture );
 
 	Mem_FreePool( &gl3_lm.pool );
 	memset( &gl3_lm, 0, sizeof( gl3_lm ));
