@@ -99,6 +99,8 @@ static const feature_message_t bugcomp_features[] =
 { BUGCOMP_GET_GAME_DIR_FULL_PATH, "Return full path in GET_GAME_DIR()", "get_game_dir_full" },
 { BUGCOMP_SPAWNFLAG_NOT_DEATHMATCH, "Inhibit entities with \"Not in Deathmatch\" spawnflag", "sf_notdm" },
 { BUGCOMP_ALWAYS_ENABLE_TEXT_INPUT, "Always enable text input during gameplay", "always_textinput" },
+{ BUGCOMP_PRESERVE_TEXTURE_NAME_CASE, "Preserve BSP texture name case", "texname_case" },
+{ BUGCOMP_BIND_NOSPLIT, "Don't split key bindings by semicolon", "bind_nosplit" },
 };
 
 static const feature_message_t engine_features[] =
@@ -827,6 +829,14 @@ static void Sys_Error_f( void )
 	Sys_Error( "%s\n", error );
 }
 
+static void Sys_Warn_f( void )
+{
+	const char *warning = Cmd_Argv( 1 );
+
+	if( !*warning ) warning = "Invoked sys warning";
+	Sys_Warn( "%s", warning );
+}
+
 /*
 =================
 Host_Crash_f
@@ -1261,6 +1271,7 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
 	{
 		Cmd_AddRestrictedCommand ( "sys_error", Sys_Error_f, "just throw a fatal error to test shutdown procedures");
 		Cmd_AddRestrictedCommand ( "host_error", Host_Error_f, "just throw a host error to test shutdown procedures");
+		Cmd_AddRestrictedCommand ( "sys_warn", Sys_Warn_f, "just show a warning to test message boxes");
 		Cmd_AddRestrictedCommand ( "crash", Host_Crash_f, "a way to force a bus error for development reasons");
 		Cmd_AddRestrictedCommand( "script", Host_Script_f, "run a console script one line per frame (scripted menu checks)" );
 	}
@@ -1378,6 +1389,7 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
 
 #ifndef XASH_DEDICATED
 	IN_GyroCheckAvailability();
+	Joy_AutoPreset();
 #endif
 
 	string demoname;
@@ -1408,6 +1420,11 @@ int EXPORT Host_Main( int argc, char **argv, const char *progname, int bChangeGa
 	// check after all configs were executed
 	HPAK_CheckIntegrity( hpk_custom_file.string );
 
+#if XASH_PS4
+	// initialization is done, startup splash can be hidden with the next frames
+	PS4_AllowHideSplash( );
+#endif
+
 	// main window message loop
 	while( host.status != HOST_CRASHED )
 	{
@@ -1432,12 +1449,16 @@ Host_Shutdown
 */
 void Host_ShutdownWithReason( const char *reason )
 {
+	string reasoncopy = "";
 	qboolean error = host.status == HOST_ERR_FATAL;
 
 	if( host.shutdown_issued )
 		return;
 
 	host.shutdown_issued = true;
+
+	if( reason != NULL )
+		Q_strncpy( reasoncopy, reason, sizeof( reasoncopy ));
 
 	if( reason != NULL )
 		Con_Printf( S_NOTE "Issuing host shutdown due to reason \"%s\"\n", reason );
@@ -1472,5 +1493,5 @@ void Host_ShutdownWithReason( const char *reason )
 
 	// restore filter
 	Sys_RestoreCrashHandler();
-	Sys_CloseLog( reason );
+	Sys_CloseLog( reason != NULL ? reasoncopy : NULL );
 }
