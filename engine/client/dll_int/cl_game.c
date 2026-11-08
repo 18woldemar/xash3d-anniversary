@@ -490,7 +490,7 @@ void CL_DrawCenterPrint( void )
 	}
 }
 
-static int V_FadeAlpha( screenfade_t *sf )
+int V_FadeAlpha( screenfade_t *sf )
 {
 	int alpha;
 

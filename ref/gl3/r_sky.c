@@ -252,7 +252,7 @@ static void R_GL3SkyVertex( float s, float t, int axis )
 void R_GL3DrawSkyBox( void )
 {
 	R_GL3TriRenderMode( kRenderNormal );
-	gl3_wanted.alphatest = FALSE;
+	gl3_wanted.alphatest = false;
 	R_GL3TriColor4ub( 255, 255, 255, 255 );
 
 	for( int i = 0; i < SKYBOX_MAX_SIDES; i++ )

@@ -245,6 +245,16 @@ void R_GL3EffectFog( qboolean allow )
 	R_GL3SetDrawFog( gl3_ri.worldviewMatrix[2], fog );
 }
 
+// a clear writes depth only through an open mask, so the state cache is told that it was opened
+void R_GL3ClearBuffers( GLbitfield mask )
+{
+	glDepthMask( GL_TRUE );
+	gl3_applied.zwrite = true;
+	glClearDepth( 1.0 );
+	glClearStencil( 0 );
+	glClear( mask );
+}
+
 // someone else is about to draw: draw what is batched, set everything again next time
 void R_GL3DrawReset( void )
 {

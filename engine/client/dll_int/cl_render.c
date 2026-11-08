@@ -170,6 +170,8 @@ intptr_t CL_RenderGetParm( const int parm, const int arg, const qboolean checkRe
 			return cls.demoplayback;
 		case PARM_WATER_LEVEL:
 			return cl.local.waterlevel;
+		case PARM_SCREEN_FADE:
+			return V_FadeAlpha( &clgame.fade );
 		case PARM_LOCAL_HEALTH:
 			return cl.local.health;
 		case PARM_SINGLEPLAYER_GAME:

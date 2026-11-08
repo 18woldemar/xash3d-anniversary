@@ -16,22 +16,7 @@ GNU General Public License for more details.
 
 #include "r_local.h"
 
-// what ref/common/ref_context.c defines for other renderers (that file clashes with the engine in one xex)
-DEFINE_ENGINE_SHARED_CVAR_LIST()
-
-ref_api_t      gEngfuncs;
-ref_globals_t *gpGlobals;
-ref_client_t  *gp_cl;
-ref_host_t    *gp_host;
-struct movevars_s *gp_movevars;
-uint16_t       rtable[MOD_FRAMES][MOD_FRAMES];
-dlight_t      *gp_dlights;
-int            g_lightstylevalue[MAX_LIGHTSTYLES];
-poolhandle_t   r_temppool;
-
-static cvar_t *r_xenon_tvgamma;
 static cvar_t *r_xenon_showtex;
-static float   gl3_tvgamma_applied = -1.0f;
 static cvar_t *r_xenon_msaa;
 static float   gl3_msaa_applied = 0.0f;
 static cvar_t *r_xenon_style;
@@ -63,21 +48,11 @@ static void R_GL3ApplyStyle( int style )
 	gEngfuncs.Cvar_SetValue( "r_xenon_swwater", style == GL3_STYLE_ORIGINAL ? 0.0f : 1.0f );
 }
 
-// random tiling of '-' textures, as ref_gl fills it at start
-void GL_InitRandomTable( void )
-{
-	for( int tu = 0; tu < MOD_FRAMES; tu++ )
-	{
-		for( int tv = 0; tv < MOD_FRAMES; tv++ )
-			rtable[tu][tv] = gEngfuncs.COM_RandomLong( 0, 0x7FFF );
-	}
-
-	gEngfuncs.COM_SetRandomSeed( 0 );
-}
-
 static qboolean R_Init( void )
 {
-	gEngfuncs.R_Init_Video( REF_D3D ); // vid_xenon.c sets the one mode
+	if( !gEngfuncs.R_Init_Video( REF_GL ))
+		return false;
+
 	r_temppool = Mem_AllocPool( "ref_gl3 zone" );
 	GL_InitRandomTable();
 	R_GL3InitScene();
@@ -92,7 +67,6 @@ static qboolean R_Init( void )
 	if( !R_GL3InitStudioMeshes( ))
 		return false;
 	r_xenon_showtex = gEngfuncs.Cvar_Get( "r_xenon_showtex", "0", 0, "draw this texture number over the frame (r_xenon_texstats list shows the numbers)" );
-	r_xenon_tvgamma = gEngfuncs.Cvar_Get( "r_xenon_tvgamma", "1", FCVAR_ARCHIVE, "undo the console's sRGB to TV gamma conversion, so the picture matches a PC monitor" );
 	// 4x by default: clean on a TV and 60 fps on the console (2026-09-18 notes); the shot tools pass their own value
 	r_xenon_msaa = gEngfuncs.Cvar_Get( "r_xenon_msaa", "4", 0, "multisampling of the 3D view through EDRAM tiling: 0, 2 or 4 samples" );
 	R_GL3InitFlashlight();
@@ -139,13 +113,6 @@ static void R_BeginFrame( qboolean clearScene )
 		}
 	}
 
-	if( r_xenon_tvgamma->value != gl3_tvgamma_applied )
-	{
-		gl3_tvgamma_applied = r_xenon_tvgamma->value;
-		R_GL3SetTVGamma( gl3_tvgamma_applied != 0.0f );
-	}
-
-	Xenon_Phase( "render" );
 	R_GL3CheckOverbright();
 	R_GL3StudioBeginFrame();
 	R_GL3FlashlightNewFrame();
@@ -176,9 +143,7 @@ static void R_EndFrame( void )
 	R_GL3EndFrameDraw();
 
 	start = gEngfuncs.pfnTime();
-	Xenon_Phase( "Present" );
 	R_GL3Present();
-	Xenon_Phase( "client" );
 	R_GL3FrameStats( gEngfuncs.pfnTime() - start );
 }
 
@@ -203,7 +168,7 @@ static intptr_t RefGetParm( int parm, int arg )
 	case PARM_TEX_FILTERING:
 		return R_GL3TextureFilteringEnabled( arg );
 	case PARM_GL_CONTEXT_TYPE:
-		return CONTEXT_TYPE_SOFTWARE;
+		return CONTEXT_TYPE_GL_CORE;
 	case PARM_GET_STUDIO_HDR:
 		return (intptr_t)R_GL3StudioGetHeader();
 	default:
@@ -294,7 +259,14 @@ static qboolean R_SetDisplayTransform( ref_screen_rotation_t rotate, int x, int 
 
 static void GL_SetupAttributes( int safegl )
 {
-	;
+	gEngfuncs.GL_SetAttribute( REF_GL_CONTEXT_PROFILE_MASK, REF_GL_CONTEXT_PROFILE_CORE );
+	gEngfuncs.GL_SetAttribute( REF_GL_CONTEXT_MAJOR_VERSION, 3 );
+	gEngfuncs.GL_SetAttribute( REF_GL_CONTEXT_MINOR_VERSION, 3 );
+	gEngfuncs.GL_SetAttribute( REF_GL_RED_SIZE, 8 );
+	gEngfuncs.GL_SetAttribute( REF_GL_GREEN_SIZE, 8 );
+	gEngfuncs.GL_SetAttribute( REF_GL_BLUE_SIZE, 8 );
+	gEngfuncs.GL_SetAttribute( REF_GL_ALPHA_SIZE, 8 );
+	gEngfuncs.GL_SetAttribute( REF_GL_DOUBLEBUFFER, 1 );
 }
 
 static qboolean VID_CubemapShot( const char *base, uint size, const float *vieworg, qboolean skyshot )
@@ -317,27 +289,14 @@ static void R_GammaChanged( qboolean do_reset_gamma )
 	}
 }
 
-#if XASH_XENON
-const char *Xenon_Phase( const char *phase ); // engine/platform/xenon/sys_xenon.c: names the step of a frame
-#endif
-
 static void R_NewMap( void )
 {
-#if XASH_XENON
-	Xenon_Phase( "new map: decals" );
-#endif
 	R_GL3ClearDecals();
 	R_GL3StudioForgetShadowCasters();
 	R_GL3StudioResetPlayerModels();
 	R_GL3NewMapScene();
 	R_GL3ResetRipples();
-#if XASH_XENON
-	Xenon_Phase( "new map: world" );
-#endif
 	R_GL3WorldNewMap();
-#if XASH_XENON
-	Xenon_Phase( "new map: done" );
-#endif
 }
 
 static qboolean R_GL3LooksLikeWater( const char *name )
@@ -486,26 +445,3 @@ const ref_interface_t gReffuncs =
 	R_FillTriAPI, // R_FillTriAPI
 	VGUI_SetupDrawing, // VGUI_SetupDrawing
 };
-
-
-int GetRefAPI( int version, ref_interface_t *funcs, ref_api_t *engfuncs, ref_globals_t *globals )
-{
-	if( version != REF_API_VERSION )
-		return 0;
-
-	*funcs = gReffuncs;
-	gEngfuncs = *engfuncs;
-	gpGlobals = globals;
-
-	gp_cl = (ref_client_t *)ENGINE_GET_PARM( PARM_GET_CLIENT_PTR );
-	gp_host = (ref_host_t *)ENGINE_GET_PARM( PARM_GET_HOST_PTR );
-	gp_movevars = (struct movevars_s *)ENGINE_GET_PARM( PARM_GET_MOVEVARS_PTR );
-	gp_dlights = (dlight_t *)ENGINE_GET_PARM( PARM_GET_DLIGHTS_PTR );
-
-	RETRIEVE_ENGINE_SHARED_CVAR_LIST();
-
-	gEngfuncs.Cvar_RegisterVariable( &r_dlight_virtual_radius );
-	gEngfuncs.Cvar_RegisterVariable( &r_lighting_extended );
-
-	return REF_API_VERSION;
-}

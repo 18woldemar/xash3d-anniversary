@@ -863,6 +863,7 @@ int CL_DrawStringf( cl_font_t *font, float x, float y, const rgba_t color, int f
 extern convar_t cl_subtitles;
 extern convar_t cl_subtitles_scale;
 extern convar_t cl_subtitles_file;
+int V_FadeAlpha( screenfade_t *sf );
 void CL_SubtitlesInit( void );
 void CL_SubtitlesResolve( void );
 void CL_SubtitlesLoadFont( void );

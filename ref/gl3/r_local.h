@@ -305,6 +305,7 @@ void R_GL3SetTransform( const float rows[16] );
 void R_GL3SetDrawFog( const float eyeplane[4], const float fog[4] );
 void R_GL3EffectFog( qboolean allow );
 void R_GL3DrawReset( void );
+void R_GL3ClearBuffers( GLbitfield mask );
 void R_GL3CountDraw( int vertices );
 qboolean R_GL3InitDraw( void );
 void R_GL3ShutdownDraw( void );
@@ -400,7 +401,7 @@ const float *R_GL3DecalVerts( decal_t *pDecal, msurface_t *surf, int *outCount )
 void R_GL3DecalShoot( int textureIndex, int entityIndex, int modelIndex, vec3_t pos, int flags, float scale );
 int R_GL3CreateDecalList( decallist_t *pList );
 void R_GL3DecalRemoveAll( int textureIndex );
-void R_GL3ClearAllDecals( void );
+void R_GL3ClearAllDecals( qboolean includePermanent );
 
 //
 // r_studio.c

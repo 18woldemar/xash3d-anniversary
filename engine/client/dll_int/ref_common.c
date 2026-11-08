@@ -695,6 +695,9 @@ static void R_CollectRendererNames( void )
 #if XASH_REF_GL_ENABLED
 		"gl",
 #endif
+#if XASH_REF_GL3_ENABLED
+		"gl3",
+#endif
 #if XASH_REF_NANOGL_ENABLED
 		"gles1",
 #endif
@@ -717,6 +720,9 @@ static void R_CollectRendererNames( void )
 	{
 #if XASH_REF_GL_ENABLED
 		"OpenGL",
+#endif
+#if XASH_REF_GL3_ENABLED
+		"OpenGL 3.3",
 #endif
 #if XASH_REF_NANOGL_ENABLED
 		"GLES1 (NanoGL)",

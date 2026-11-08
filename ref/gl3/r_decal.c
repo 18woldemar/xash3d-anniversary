@@ -701,10 +701,15 @@ void R_GL3DecalRemoveAll( int textureIndex )
 	}
 }
 
-void R_GL3ClearAllDecals( void )
+void R_GL3ClearAllDecals( qboolean includePermanent )
 {
 	for( int i = 0; i < MAX_RENDER_DECALS; i++ )
+	{
+		if( !includePermanent && FBitSet( gl3_decals[i].flags, FDECAL_PERMANENT ))
+			continue;
+
 		R_GL3DecalUnlink( &gl3_decals[i] );
+	}
 
 	if( gEngfuncs.drawFuncs->R_ClearStudioDecals )
 		gEngfuncs.drawFuncs->R_ClearStudioDecals();

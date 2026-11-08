@@ -17,8 +17,7 @@ GNU General Public License for more details.
 
 /*
 Matrices are ref_gl's (row-major, applied to column vectors, OpenGL clip space) so the engine and client get
-what they expect from WorldToScreen and GetMatrix. Only what goes to the GPU is converted: Direct3D wants clip
-z in [0, w] where OpenGL has [-w, w], which gives the same depth buffer values as glDepthRange( 0, 1 ).
+what they expect from WorldToScreen and GetMatrix, and they go to the GPU as they are.
 */
 
 #include "r_local.h"
@@ -27,7 +26,17 @@ z in [0, w] where OpenGL has [-w, w], which gives the same depth buffer values a
 gl3_view_t    gl3_ri;
 gl3_globals_t gl3_tr;
 
-static D3DVIEWPORT9 gl3_viewport;
+// x and y as the engine gives them, from the top left
+static struct
+{
+	int x, y, width, height;
+} gl3_viewport;
+
+static void R_GL3ApplyViewport( int x, int y, int width, int height )
+{
+	R_GL3DrawReset();
+	glViewport( x, gpGlobals->height - y - height, width, height );
+}
 
 /*
 ==============================================================================
@@ -375,14 +384,14 @@ MATRICES
 
 ==============================================================================
 */
-// the object-to-clip matrix for the GPU: clip z moved from [-w, w] to [0, w]
+// the object-to-clip matrix for the GPU
 void R_GL3ClipMatrix( const matrix4x4 m, float rows[16] )
 {
 	for( int j = 0; j < 4; j++ )
 	{
 		rows[j] = m[0][j];
 		rows[4 + j] = m[1][j];
-		rows[8 + j] = 0.5f * ( m[2][j] + m[3][j] );
+		rows[8 + j] = m[2][j];
 		rows[12 + j] = m[3][j];
 	}
 }
@@ -480,24 +489,22 @@ static void R_GL3SetupView( void )
 	const int *vp = gl3_ri.rvp.viewport;
 
 	// ref_gl rounds the corners outwards; the top-left origin needs no flip here
-	gl3_viewport.X = Q_max( 0, vp[0] );
-	gl3_viewport.Y = Q_max( 0, vp[1] );
-	gl3_viewport.Width = Q_min( gpGlobals->width - (int)gl3_viewport.X, vp[2] );
-	gl3_viewport.Height = Q_min( gpGlobals->height - (int)gl3_viewport.Y, vp[3] );
-	gl3_viewport.MinZ = 0.0f;
-	gl3_viewport.MaxZ = 1.0f;
+	gl3_viewport.x = Q_max( 0, vp[0] );
+	gl3_viewport.y = Q_max( 0, vp[1] );
+	gl3_viewport.width = Q_min( gpGlobals->width - gl3_viewport.x, vp[2] );
+	gl3_viewport.height = Q_min( gpGlobals->height - gl3_viewport.y, vp[3] );
 
-	R_GL3DrawReset();
-	gl3_device->SetViewport( &gl3_viewport );
-	gl3_device->Clear( 0, NULL, D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0, 1.0f, 0 );
+	R_GL3ApplyViewport( gl3_viewport.x, gl3_viewport.y, gl3_viewport.width, gl3_viewport.height );
+	glDepthRange( 0.0, 1.0 );
+	R_GL3ClearBuffers( GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
 
 	R_GL3SetupMatrices();
 
-	gl3_wanted.ztest = TRUE;
-	gl3_wanted.zwrite = TRUE;
+	gl3_wanted.ztest = true;
+	gl3_wanted.zwrite = true;
 	gl3_wanted.cull = GL3_CULL_FRONT;
-	gl3_wanted.blend = FALSE;
-	gl3_wanted.alphatest = FALSE;
+	gl3_wanted.blend = false;
+	gl3_wanted.alphatest = false;
 	R_GL3TriColor4ub( 255, 255, 255, 255 );
 }
 
@@ -619,27 +626,20 @@ void R_GL3CheckFog( void )
 // the view's viewport with another depth range (the view model), 0..1 restores it
 void R_GL3SetDepthRange( float minz, float maxz )
 {
-	D3DVIEWPORT9 vp = gl3_viewport;
-
-	vp.MinZ = minz;
-	vp.MaxZ = maxz;
 	R_GL3DrawReset();
-	gl3_device->SetViewport( &vp );
+	glDepthRange( minz, maxz );
 }
 
 void R_GL3RestoreViewport( void )
 {
-	D3DVIEWPORT9 full = { 0, 0, (DWORD)gpGlobals->width, (DWORD)gpGlobals->height, 0.0f, 1.0f };
-
-	R_GL3DrawReset();
-	gl3_device->SetViewport( &full );
+	R_GL3ApplyViewport( 0, 0, gpGlobals->width, gpGlobals->height );
+	glDepthRange( 0.0, 1.0 );
 }
 
 // what an off-screen pass leaves behind: the viewport of the view being drawn, not the whole screen
 void R_GL3RestoreViewViewport( void )
 {
-	R_GL3DrawReset();
-	gl3_device->SetViewport( &gl3_viewport );
+	R_GL3ApplyViewport( gl3_viewport.x, gl3_viewport.y, gl3_viewport.width, gl3_viewport.height );
 }
 
 static void R_GL3RenderScene( void )
@@ -823,7 +823,7 @@ static void R_GL3RenderScene( void )
 	}
 
 	// the view model draws unblended; task 3 gives it depth range 0..0.3
-	gl3_wanted.blend = FALSE;
+	gl3_wanted.blend = false;
 	if( entities )
 		R_GL3DrawViewModel();
 	gEngfuncs.CL_ExtraUpdate();

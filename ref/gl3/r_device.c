@@ -84,9 +84,7 @@ void R_GL3DestroyDevice( void )
 void R_GL3Clear( byte r, byte g, byte b )
 {
 	glClearColor( r / 255.0f, g / 255.0f, b / 255.0f, 1.0f );
-	glClearDepth( 1.0 );
-	glDepthMask( GL_TRUE );
-	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
+	R_GL3ClearBuffers( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
 }
 
 void R_GL3Present( void )
@@ -246,9 +244,7 @@ void R_GL3EnsureTiledScene( void )
 	glBindFramebuffer( GL_FRAMEBUFFER, gl3_scene.fbo );
 	glViewport( 0, 0, gl3_scene.width, gl3_scene.height );
 	glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
-	glClearDepth( 1.0 );
-	glDepthMask( GL_TRUE );
-	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
+	R_GL3ClearBuffers( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
 	gl3_scene.active = true;
 }
 

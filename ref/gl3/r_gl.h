@@ -38,6 +38,7 @@ GNU General Public License for more details.
 	X( PFNGLCLEARPROC, glClear ) \
 	X( PFNGLCLEARCOLORPROC, glClearColor ) \
 	X( PFNGLCLEARDEPTHPROC, glClearDepth ) \
+	X( PFNGLCLEARSTENCILPROC, glClearStencil ) \
 	X( PFNGLVIEWPORTPROC, glViewport ) \
 	X( PFNGLSCISSORPROC, glScissor ) \
 	X( PFNGLDEPTHRANGEPROC, glDepthRange ) \
@@ -122,6 +123,7 @@ GL3_FUNCTIONS( GL3_DECLARE )
 #define glClear                        pglClear
 #define glClearColor                   pglClearColor
 #define glClearDepth                   pglClearDepth
+#define glClearStencil                 pglClearStencil
 #define glViewport                     pglViewport
 #define glScissor                      pglScissor
 #define glDepthRange                   pglDepthRange

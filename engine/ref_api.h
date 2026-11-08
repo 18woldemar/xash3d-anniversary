@@ -359,6 +359,7 @@ typedef enum
 	PARM_GET_DLIGHTS_PTR = -21,
 	PARM_GET_ELIGHTS_PTR = -22,
 	PARM_GET_STUDIO_HDR = -23, // current m_pStudioHeader in renderer
+	PARM_SCREEN_FADE = -24, // V_FadeAlpha of clgame.fade: the software style warps the view while it runs
 
 	// implemented by ref_dll
 
