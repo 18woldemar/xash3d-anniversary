@@ -18,7 +18,12 @@ mkdir -p "$out" "$run/valve"
 rm -f "$out"/*.png
 cp "$list" "$run/valve/shots.txt"
 rm -f "$log"
-RUN_TIMEOUT=$limit "$tools/run" run -randomseed 1 ${SHOTS_ARGS:-} +shots shots.txt > /tmp/shots-run.out 2>&1 &
+# A shot set is only a baseline if it does not depend on the config the run tree carries: every cvar that
+# changes what the camera sees is named here. SHOTS_ARGS comes after them and wins.
+pinned="+gamma 2.5 +brightness 1 +gl_overbright 0 +gl_texture_nearest 0 +gl_lightmap_nearest 0 +gl_anisotropy 8"
+pinned="$pinned +gl_fog 1 +gl_vbo 0 +r_detailtextures 0 +r_lighting_modulate 0.6 +r_lighting_extended 1"
+pinned="$pinned +r_lighting_ambient 0.3 +r_dynamic 1 +r_ripple 0 +r_traceglow 0 +cl_himodels 0 +default_fov 90"
+RUN_TIMEOUT=$limit "$tools/run" run -randomseed 1 $pinned ${SHOTS_ARGS:-} +shots shots.txt > /tmp/shots-run.out 2>&1 &
 runner=$!
 
 taken=0

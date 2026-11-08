@@ -14,7 +14,7 @@ GNU General Public License for more details.
 */
 
 // Half-Life never had subtitles for its speech. The text comes from Fograin/hl-subs-mod through
-// tools/mksubs, which writes subtitles.txt in the syntax of titles.txt, so the file is read with the
+// tools/mksubs, which writes subtitles_<language>.txt in the syntax of titles.txt, so the file is read with the
 // parser the engine already has. A caption starts where a sentence starts, in VOX_LoadSound, and lives as
 // long as that channel keeps the sentence: when the speaker is killed, the level changes or a save is
 // loaded the channel goes and the caption goes with it, with no bookkeeping of its own.
@@ -80,6 +80,8 @@ static struct
 CVAR_DEFINE_AUTO( cl_subtitles, "0", FCVAR_ARCHIVE, "show captions for the game's speech" );
 // how large the captions are depends on the screen and how far away it is, so it is a knob and not a constant
 CVAR_DEFINE_AUTO( cl_subtitles_scale, "1.25", FCVAR_ARCHIVE, "size of the captions, in HUD fonts" );
+// set by the engine and read by the menu, so the rule of which file goes with which language lives here alone
+CVAR_DEFINE_AUTO( cl_subtitles_file, "", FCVAR_READ_ONLY, "caption file of the game's language, empty when it has none" );
 
 /*
 ====================
@@ -638,6 +640,35 @@ void CL_SubtitlesClear( void )
 
 /*
 ====================
+CL_SubtitlesResolve
+
+Which caption file goes with the game. Captions are in the language the menus really show, and are meant
+to be read over English speech. The language is in the file's name because valve/ is mounted under every
+language: a plain valve/subtitles.txt would put English captions under a Spanish menu and its dubbed speech.
+
+ponytail: captions exist for English and Russian only and Steam dubs neither, so dubbed speech is not
+checked. Add a filesystem query when a language with captions can also be dubbed.
+====================
+*/
+void CL_SubtitlesResolve( void )
+{
+	const char *language = Cvar_VariableString( "ui_language" );
+	const char *file;
+
+	// the menu falls back to English for a language Valve has no menu strings for, and so do the captions
+	if( !FS_FileExists( va( "resource/gameui_%s.txt", language ), false ))
+		language = "english";
+
+	file = va( "subtitles_%s.txt", language );
+
+	if( !FS_FileExists( file, false ))
+		file = "";
+
+	Cvar_FullSet( cl_subtitles_file.name, file, cl_subtitles_file.flags );
+}
+
+/*
+====================
 CL_SubtitlesInit
 
 The caption file of the language the game is mounted in, parsed like titles.txt.
@@ -650,8 +681,10 @@ void CL_SubtitlesInit( void )
 
 	CL_SubtitlesShutdown();
 
-	if(( pMemFile = (char *)FS_LoadFile( "subtitles.txt", &fileSize, false )) == NULL )
-		return; // a language without captions of its own
+	CL_SubtitlesResolve();
+
+	if( COM_StringEmpty( cl_subtitles_file.string ) || ( pMemFile = (char *)FS_LoadFile( cl_subtitles_file.string, &fileSize, false )) == NULL )
+		return; // a language without captions
 
 	cl_captions = CL_TextMessageParse( clgame.mempool, pMemFile, fileSize, &cl_numcaptions );
 	Mem_Free( pMemFile );

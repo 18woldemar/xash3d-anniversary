@@ -23,7 +23,7 @@ GNU General Public License for more details.
 #include "platform/platform.h"
 #include "menu_int.h"
 
-#if !XASH_ANDROID && !XASH_NSWITCH && !XASH_PSVITA
+#if !XASH_ANDROID && !XASH_NSWITCH && !XASH_PSVITA && !XASH_PS4
 void Platform_ShellExecute( const char *path, const char *parms )
 {
 	const char *argv[] = { OPEN_COMMAND, path, NULL };
@@ -36,7 +36,7 @@ void Platform_ShellExecute( const char *path, const char *parms )
 		exit( 1 );
 	}
 }
-#endif // !XASH_ANDROID && !XASH_NSWITCH && !XASH_PSVITA
+#endif // !XASH_ANDROID && !XASH_NSWITCH && !XASH_PSVITA && !XASH_PS4
 
 void Posix_Daemonize( void )
 {
@@ -135,4 +135,19 @@ void Platform_Sleep( int msec )
 	usleep( msec * 1000 );
 }
 #endif // XASH_TIMER == TIMER_POSIX
+
+#if defined( HAVE_GETRUSAGE )
+#include <sys/resource.h>
+
+double Posix_GetCPUTime( void )
+{
+	struct rusage usage;
+
+	if( getrusage( RUSAGE_SELF, &usage ) != 0 )
+		return 0.0;
+
+	return usage.ru_utime.tv_sec + usage.ru_utime.tv_usec * 1e-6
+		+ usage.ru_stime.tv_sec + usage.ru_stime.tv_usec * 1e-6;
+}
+#endif // HAVE_GETRUSAGE
 

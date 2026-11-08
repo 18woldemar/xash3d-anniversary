@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# The caption files the engine's subtitle system reads: valve/subtitles.txt (English) and
-# valve_<language>/subtitles.txt for every language whose text exists.
+# The caption files the engine's subtitle system reads: valve/subtitles_english.txt and
+# valve_<language>/subtitles_<language>.txt for every language whose text exists. The language is in the
+# name because valve/ is mounted under every language: a plain valve/subtitles.txt was found on French too.
 # The text comes from Fograin/hl-subs-mod, which writes it in titles.txt syntax keyed by the name of a
 # sentence group, so the engine parses it with the parser it already has. Its licence allows reuse in a
 # free mod with credit, so a build that ships the captions must credit the mod and carry its licence text.
@@ -126,7 +127,7 @@ def write( language, path, alias ):
 			out.append( b'}' )
 			out.append( b'' )
 
-	dst = os.path.join( run, language, 'subtitles.txt' )
+	dst = os.path.join( run, language, 'subtitles_%s.txt' % ( language.partition( '_' )[2] or 'english' ))
 	os.makedirs( os.path.dirname( dst ), exist_ok = True )
 	with open( dst, 'wb' ) as f:
 		f.write( b'// Speech subtitles. The text is the Half-Life Subtitles MOD by Fograin92, with edits by\n'

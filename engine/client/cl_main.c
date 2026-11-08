@@ -3782,6 +3782,8 @@ static void CL_InitLocal( void )
 	Cvar_RegisterVariable( &cl_fixmodelinterpolationartifacts );
 	Cvar_RegisterVariable( &cl_subtitles );
 	Cvar_RegisterVariable( &cl_subtitles_scale );
+	Cvar_RegisterVariable( &cl_subtitles_file );
+	CL_SubtitlesResolve(); // the menu asks before any map has loaded the captions
 
 	// server commands
 	Cmd_AddCommand ("noclip", NULL, "enable or disable no clipping mode" );
