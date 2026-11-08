@@ -1,6 +1,6 @@
 /*
 r_world.c - ref_gl3: world and brush surfaces
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Surface building, visibility, culling and texture animation follow ref/gl/gl_rsurf.c and gl_cull.c,
 Copyright (C) 2010 Uncle Mike
 
@@ -1575,7 +1575,7 @@ Every draw says which geometry it is: a range of this frame's indices (or of its
 an object matrix. A frame where one of them says something else draws real faces of the map in the wrong
 place, or the wrong faces under the right texture - which is what a player sees as a piece of the level
 lying somewhere it is not. Nothing here should ever fire; it runs so that the first time one does, the log
-names the draw instead of leaving a photograph of a television to argue about.
+names the draw.
 ==================
 */
 static void R_GL3CheckDraws( void )

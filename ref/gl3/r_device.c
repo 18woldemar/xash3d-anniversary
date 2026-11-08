@@ -122,7 +122,7 @@ static struct
 
 static void R_GL3FreeSceneTarget( void )
 {
-	R_GL3EndTiledScene();
+	R_GL3EndSceneTarget();
 
 	if( gl3_scene.scene )
 		R_GL3FreeTexture( gl3_scene.scene );
@@ -219,8 +219,8 @@ qboolean R_GL3SetMSAA( int samples )
 }
 
 // GL_BackendStartFrame: the engine's 3D views follow. The target binds at the first draw of the scene
-// (R_GL3EnsureTiledScene), so that the frame's own off-screen passes - the flashlight's shadow map - come first.
-void R_GL3BeginTiledScene( void )
+// (R_GL3EnsureSceneTarget), so that the frame's own off-screen passes - the flashlight's shadow map - come first.
+void R_GL3BeginSceneTarget( void )
 {
 	if( !gl3_scene.enabled || gl3_scene.active )
 		return;
@@ -233,7 +233,7 @@ void R_GL3WaitForGPU( void )
 	// OpenGL orders a frame's passes by itself
 }
 
-void R_GL3EnsureTiledScene( void )
+void R_GL3EnsureSceneTarget( void )
 {
 	if( !gl3_scene.pending || gl3_scene.active )
 		return;
@@ -250,13 +250,13 @@ void R_GL3EnsureTiledScene( void )
 
 /*
 ==================
-R_GL3EndTiledScene
+R_GL3EndSceneTarget
 
 GL_BackendEndFrame, and an error before it frees anything the frame uses: the target is resolved into the
 scene texture, and drawing goes back to the back buffer.
 ==================
 */
-void R_GL3EndTiledScene( void )
+void R_GL3EndSceneTarget( void )
 {
 	gl3_scene.pending = false;
 
@@ -274,13 +274,13 @@ void R_GL3EndTiledScene( void )
 }
 
 // true while the 3D part draws into the target: an off-screen pass must not bind its own framebuffer then
-qboolean R_GL3TiledSceneActive( void )
+qboolean R_GL3SceneTargetActive( void )
 {
 	return gl3_scene.active;
 }
 
 // true when the frame goes through the target at all
-qboolean R_GL3TiledSceneWanted( void )
+qboolean R_GL3SceneTargetWanted( void )
 {
 	return gl3_scene.enabled;
 }
@@ -292,7 +292,7 @@ void R_GL3RestoreBackBuffer( void )
 }
 
 // the scene texture's slot for the 2D part to draw first, once; 0 when this frame resolved no 3D part
-int R_GL3TakeTiledScene( void )
+int R_GL3TakeSceneTarget( void )
 {
 	const qboolean resolved = gl3_scene.resolved;
 

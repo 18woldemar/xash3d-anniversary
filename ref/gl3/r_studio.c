@@ -1,6 +1,6 @@
 /*
 r_studio.c - ref_gl3: studio models, the engine_studio_api_t side
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Follows ref/gl/gl_studio.c, Copyright (C) 2010 Uncle Mike
 
 This program is free software: you can redistribute it and/or modify

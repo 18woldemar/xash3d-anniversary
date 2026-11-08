@@ -173,7 +173,7 @@ void R_GL3FlashlightShadow( int first, int last )
 	// frame draws straight into the back buffer and that same memory is the picture, so the pass would
 	// write its depth over what the player sees. The lighting falls back to *white, which reads as
 	// nothing in the way.
-	if( !R_GL3TiledSceneWanted( ))
+	if( !R_GL3SceneTargetWanted( ))
 		return;
 
 	if( !R_GL3FlashlightMakeShadowMap( ))
@@ -228,7 +228,7 @@ const float *R_GL3FlashlightParams( void )
 // whether a map will be built at all this frame: the models only keep their poses for one that is
 qboolean R_GL3FlashlightShadowsWanted( void )
 {
-	return gl3_flashlight.active && r_flashlight_shadows->value != 0.0f && R_GL3TiledSceneWanted( );
+	return gl3_flashlight.active && r_flashlight_shadows->value != 0.0f && R_GL3SceneTargetWanted( );
 }
 
 // the lamp itself and 1 / its range: the shaders measure the distance from it, as HL2's model path does

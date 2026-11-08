@@ -1,6 +1,6 @@
 /*
 r_decal.c - ref_gl3: decals on brush surfaces
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Decal placement, clipping, pool and save lists follow ref/gl/gl_decals.c, Copyright (C) 2010 Uncle Mike
 
 This program is free software: you can redistribute it and/or modify

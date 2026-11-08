@@ -1,6 +1,6 @@
 /*
 r_main.c - ref_gl3: the renderer interface, init, frames
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Based on ref/null/r_context.c, Copyright (C) 2023-2024 a1batross
 
 This program is free software: you can redistribute it and/or modify
@@ -34,7 +34,7 @@ static void R_GL3ApplyStyle( int style )
 {
 	const qboolean software = style == GL3_STYLE_SOFTWARE;
 
-	// both accelerated styles take the 4 samples the console can afford; the span renderer never had any
+	// both accelerated styles take 4 samples; the span renderer never had any
 	gEngfuncs.Cvar_SetValue( "r_msaa", software ? 0.0f : 4.0f );
 
 	// gl_overbright lives in the accelerated renderer only: the span renderer lights through its own ramp
@@ -51,14 +51,21 @@ static void R_GL3ApplyStyle( int style )
 static qboolean R_Init( void )
 {
 	if( !gEngfuncs.R_Init_Video( REF_GL ))
+	{
+		gEngfuncs.R_Free_Video();
 		return false;
+	}
 
 	r_temppool = Mem_AllocPool( "ref_gl3 zone" );
 	GL_InitRandomTable();
 	R_GL3InitScene();
 	R_GL3StudioInit();
+	// no 3.3 context: the engine goes on to the next renderer in its list, so the window goes too
 	if( !R_GL3CreateDevice( gpGlobals->width, gpGlobals->height ))
+	{
+		gEngfuncs.R_Free_Video();
 		return false;
+	}
 
 	R_GL3InitImages();
 	if( !R_GL3InitDraw( ) || !R_GL3InitWorld( ))
@@ -67,8 +74,8 @@ static qboolean R_Init( void )
 	if( !R_GL3InitStudioMeshes( ))
 		return false;
 	r_showtex = gEngfuncs.Cvar_Get( "r_showtex", "0", 0, "draw this texture number over the frame (r_texstats list shows the numbers)" );
-	// 4x by default: clean on a TV and 60 fps on the console (2026-09-18 notes); the shot tools pass their own value
-	r_msaa = gEngfuncs.Cvar_Get( "r_msaa", "4", 0, "multisampling of the 3D view through EDRAM tiling: 0, 2 or 4 samples" );
+	// the shot tools pass their own value
+	r_msaa = gEngfuncs.Cvar_Get( "r_msaa", "4", 0, "multisampling of the 3D view: 0, 2 or 4 samples" );
 	R_GL3InitFlashlight();
 	r_style = gEngfuncs.Cvar_Get( "r_style", "2", FCVAR_ARCHIVE,
 		"render style: 0 the original accelerated renderer, 1 the software one, 2 ours" );
@@ -93,8 +100,8 @@ static void R_Shutdown( void )
 static void R_BeginFrame( qboolean clearScene )
 {
 	// a frame cut short by an error: its 3D part closed, the picture dropped
-	R_GL3EndTiledScene();
-	R_GL3TakeTiledScene();
+	R_GL3EndSceneTarget();
+	R_GL3TakeSceneTarget();
 
 	if( r_style->value != gl3_style_applied )
 	{
@@ -129,7 +136,7 @@ static void R_EndFrame( void )
 {
 	double start;
 
-	R_GL3EndTiledScene(); // never Present inside the bracket
+	R_GL3EndSceneTarget(); // never Present inside the bracket
 
 	if( r_showtex->value > 0.0f )
 	{
@@ -382,8 +389,8 @@ const ref_interface_t gReffuncs =
 	R_EndFrame, // R_EndFrame
 	R_GL3PushScene, // R_PushScene
 	R_GL3PopScene, // R_PopScene
-	R_GL3BeginTiledScene, // GL_BackendStartFrame
-	R_GL3EndTiledScene, // GL_BackendEndFrame
+	R_GL3BeginSceneTarget, // GL_BackendStartFrame
+	R_GL3EndSceneTarget, // GL_BackendEndFrame
 	(void (*)( void ))R_SimpleStub, // R_ClearScreen
 	(void (*)( qboolean allow ))R_SimpleStubBool, // R_AllowFog
 	R_GL3SetRenderMode, // GL_SetRenderMode

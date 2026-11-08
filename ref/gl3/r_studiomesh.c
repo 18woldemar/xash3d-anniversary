@@ -1,6 +1,6 @@
 /*
 r_studiomesh.c - ref_gl3: drawing studio submodels on the GPU
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Mesh order, render states and lighting follow ref/gl/gl_studio.c R_StudioDrawPoints, Copyright (C) 2010 Uncle Mike
 
 This program is free software: you can redistribute it and/or modify

@@ -1,6 +1,6 @@
 /*
 r_light.c - ref_gl3: lightmaps
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Lightmap building, light style updates and dynamic light blocks follow ref/gl/gl_rsurf.c,
 Copyright (C) 2010 Uncle Mike
 

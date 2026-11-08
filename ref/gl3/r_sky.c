@@ -1,6 +1,6 @@
 /*
 r_sky.c - ref_gl3: the sky box
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Sky clipping and drawing follow ref/gl/gl_warp.c, Copyright (C) 2010 Uncle Mike
 
 This program is free software: you can redistribute it and/or modify

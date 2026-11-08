@@ -380,7 +380,7 @@ void R_GL3Set2DMode( qboolean enable )
 
 	if( enable )
 	{
-		const int scene = R_GL3TakeTiledScene();
+		const int scene = R_GL3TakeSceneTarget();
 
 		R_GL3RestoreViewport();
 		R_GL3Load2DTransform();

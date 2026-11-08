@@ -1,6 +1,6 @@
 /*
 r_beams.c - ref_gl3: beams
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Follows ref/gl/gl_beams.c and gl_triapi.c, Copyright (C) 2009 Uncle Mike
 
 This program is free software: you can redistribute it and/or modify

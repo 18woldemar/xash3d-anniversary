@@ -1,6 +1,6 @@
 /*
 r_screenshot.c - ref_gl3: screenshots and save game pictures
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Sizes and image processing follow ref/gl/gl_backend.c VID_ScreenShot, Copyright (C) 2010 Uncle Mike
 
 This program is free software: you can redistribute it and/or modify

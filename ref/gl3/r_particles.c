@@ -1,6 +1,6 @@
 /*
 r_particles.c - ref_gl3: particles and tracers
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Follows ref/gl/gl_rpart.c, Copyright (C) 2010 Uncle Mike
 
 This program is free software: you can redistribute it and/or modify

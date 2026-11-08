@@ -236,9 +236,9 @@ void R_GL3BindGamma( GLuint glnum );
 void R_GL3BindRipple( int texnum );
 void R_GL3BindCookie( int texnum );
 void R_GL3BindShadowMap( int texnum );
-void R_GL3EnsureTiledScene( void );
-qboolean R_GL3TiledSceneActive( void );
-qboolean R_GL3TiledSceneWanted( void );
+void R_GL3EnsureSceneTarget( void );
+qboolean R_GL3SceneTargetActive( void );
+qboolean R_GL3SceneTargetWanted( void );
 void R_GL3WaitForGPU( void );
 void R_GL3RestoreBackBuffer( void );
 void R_GL3UnbindTexture( GLuint glnum );
@@ -523,9 +523,9 @@ void R_GL3DestroyDevice( void );
 void R_GL3Clear( byte r, byte g, byte b );
 void R_GL3Present( void );
 qboolean R_GL3SetMSAA( int samples );
-void R_GL3BeginTiledScene( void );
-void R_GL3EndTiledScene( void );
-int R_GL3TakeTiledScene( void );
+void R_GL3BeginSceneTarget( void );
+void R_GL3EndSceneTarget( void );
+int R_GL3TakeSceneTarget( void );
 
 // r_screenshot.c
 qboolean R_GL3ScreenShot( const char *filename, int shot_type );

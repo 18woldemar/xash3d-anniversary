@@ -1,6 +1,6 @@
 /*
 r_sprite.c - ref_gl3: sprite models
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 Follows ref/gl/gl_sprite.c and gl_triapi.c, Copyright (C) 2010 Uncle Mike
 
 This program is free software: you can redistribute it and/or modify

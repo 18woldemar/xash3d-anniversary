@@ -1,6 +1,6 @@
 /*
 r_scene.c - ref_gl3: entity lists, view setup, the 3D frame
-Copyright (C) 2026 xash3d-xenon
+Copyright (C) 2026 18woldemar
 View, frustum and entity list logic follow ref/gl/gl_rmain.c and gl_frustum.c,
 Copyright (C) 2010-2016 Uncle Mike
 
@@ -661,7 +661,7 @@ static void R_GL3RenderScene( void )
 
 	// gl_rmain.c R_RenderScene: the water field steps before anything reads it, and only outside the
 	// recording - its upload locks a texture the recorded commands may already be reading
-	if( R_GL3RipplesWanted( ) && !R_GL3TiledSceneActive( ))
+	if( R_GL3RipplesWanted( ) && !R_GL3SceneTargetActive( ))
 		R_GL3AnimateRipples();
 
 	// The angles are mended before anything is built from them: the basis, but also the view matrices and
@@ -741,13 +741,12 @@ static void R_GL3RenderScene( void )
 
 	R_GL3WorldUpload();
 
-	// The flashlight's map renders off screen, so it has to be done before EDRAM belongs to the bands.
-	// A frame can hold more than one view - a camera or a monitor gives the client a second one - and
-	// the later views run inside the recording, where switching render targets hangs the GPU. They keep
-	// the map the first view filled.
-	if( !R_GL3TiledSceneActive( ))
+	// The flashlight's map renders off screen, so it is done before the scene target is bound. A frame can
+	// hold more than one view - a camera or a monitor gives the client a second one - and the later views
+	// keep the map the first view filled.
+	if( !R_GL3SceneTargetActive( ))
 		R_GL3FlashlightShadow( 0, solid_end );
-	R_GL3EnsureTiledScene();
+	R_GL3EnsureSceneTarget();
 	R_GL3LoadIdentity();
 
 	if( drawworld )

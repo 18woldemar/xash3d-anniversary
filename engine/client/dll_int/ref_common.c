@@ -692,11 +692,11 @@ static void R_CollectRendererNames( void )
 	// ordering is important!
 	static const char *short_names[] =
 	{
-#if XASH_REF_GL_ENABLED
-		"gl",
-#endif
 #if XASH_REF_GL3_ENABLED
 		"gl3",
+#endif
+#if XASH_REF_GL_ENABLED
+		"gl",
 #endif
 #if XASH_REF_NANOGL_ENABLED
 		"gles1",
@@ -718,11 +718,11 @@ static void R_CollectRendererNames( void )
 	// ordering is important here too!
 	static const char *long_names[ARRAYSIZE( short_names )] =
 	{
-#if XASH_REF_GL_ENABLED
-		"OpenGL",
-#endif
 #if XASH_REF_GL3_ENABLED
 		"OpenGL 3.3",
+#endif
+#if XASH_REF_GL_ENABLED
+		"OpenGL",
 #endif
 #if XASH_REF_NANOGL_ENABLED
 		"GLES1 (NanoGL)",
