@@ -884,6 +884,12 @@ void R_GL3BindLightmap( GLuint glnum )
 	R_GL3BindUnit( 1, glnum );
 }
 
+// the studio shader's gamma tables: integers, read with texelFetch
+void R_GL3BindGamma( GLuint glnum )
+{
+	R_GL3BindUnit( GL3_UNIT_GAMMA, glnum );
+}
+
 // an extra unit's texture with its own sampling
 static void R_GL3BindExtra( int unit, int texnum, qboolean filtered, qboolean clamp )
 {

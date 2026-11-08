@@ -232,6 +232,7 @@ const char *R_GL3TextureName( unsigned int texnum );
 const byte *R_GL3TextureData( unsigned int texnum );
 void R_GL3BindTexture( int texnum );
 void R_GL3BindLightmap( GLuint glnum );
+void R_GL3BindGamma( GLuint glnum );
 void R_GL3BindRipple( int texnum );
 void R_GL3BindCookie( int texnum );
 void R_GL3BindShadowMap( int texnum );
@@ -528,6 +529,5 @@ int R_GL3TakeTiledScene( void );
 
 // r_screenshot.c
 qboolean R_GL3ScreenShot( const char *filename, int shot_type );
-void R_GL3ShutdownScreenShots( void );
 
 #endif // R_LOCAL_H

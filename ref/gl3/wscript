@@ -9,8 +9,7 @@ def options(opt):
 def configure(conf):
 	pass
 
-NOT_PORTED = ['r_beams.c', 'r_flashlight.c', 'r_particles.c', 'r_screenshot.c',
-	'r_sprite.c', 'r_studio.c', 'r_studiomesh.c']
+NOT_PORTED = ['r_flashlight.c']
 
 def glsl_header(task):
 	# shaders/<name>.glsl becomes "<name>.glsl.h" holding the source as the string <name>_glsl

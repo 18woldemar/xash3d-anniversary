@@ -82,7 +82,6 @@ static void R_Shutdown( void )
 	R_GL3ShutdownWorld();
 	R_GL3ShutdownLightmaps();
 	R_GL3ShutdownStudioMeshes();
-	R_GL3ShutdownScreenShots();
 	R_GL3SetMSAA( 0 );
 	R_GL3ShutdownDraw();
 	R_GL3ShutdownImages();

@@ -56,11 +56,11 @@ void R_GL3DrawParticles( double frametime, particle_t *cl_active_particles, floa
 
 	palette = (const color24 *)ENGINE_GET_PARM( PARM_GET_PALETTE_PTR );
 
-	gl3_wanted.blend = TRUE;
-	gl3_wanted.src = D3DBLEND_SRCALPHA;
-	gl3_wanted.dst = D3DBLEND_INVSRCALPHA;
-	gl3_wanted.alphatest = FALSE;
-	gl3_wanted.zwrite = FALSE;
+	gl3_wanted.blend = true;
+	gl3_wanted.src = GL_SRC_ALPHA;
+	gl3_wanted.dst = GL_ONE_MINUS_SRC_ALPHA;
+	gl3_wanted.alphatest = false;
+	gl3_wanted.zwrite = false;
 	R_GL3Bind( gl3_particle_texture );
 
 	for( particle_t *p = cl_active_particles; p; p = p->next )
@@ -105,7 +105,7 @@ void R_GL3DrawParticles( double frametime, particle_t *cl_active_particles, floa
 		gEngfuncs.CL_ThinkParticle( frametime, p );
 	}
 
-	gl3_wanted.zwrite = TRUE;
+	gl3_wanted.zwrite = true;
 }
 
 // true when the tracer's box is outside the view
@@ -164,11 +164,11 @@ void R_GL3DrawTracers( double frametime, particle_t *cl_active_tracers )
 	if( !R_GL3SpriteTexture( gEngfuncs.GetDefaultSprite( REF_DOT_SPRITE ), 0 ))
 		return;
 
-	gl3_wanted.blend = TRUE;
-	gl3_wanted.src = D3DBLEND_SRCALPHA;
-	gl3_wanted.dst = D3DBLEND_ONE;
-	gl3_wanted.alphatest = FALSE;
-	gl3_wanted.zwrite = FALSE;
+	gl3_wanted.blend = true;
+	gl3_wanted.src = GL_SRC_ALPHA;
+	gl3_wanted.dst = GL_ONE;
+	gl3_wanted.alphatest = false;
+	gl3_wanted.zwrite = false;
 
 	gravity = frametime * gp_movevars->gravity;
 	scale = 1.0 - ( frametime * 0.9 );
@@ -237,5 +237,5 @@ void R_GL3DrawTracers( double frametime, particle_t *cl_active_tracers )
 		}
 	}
 
-	gl3_wanted.zwrite = TRUE;
+	gl3_wanted.zwrite = true;
 }

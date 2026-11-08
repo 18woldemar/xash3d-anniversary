@@ -348,29 +348,29 @@ void R_GL3DrawSpriteModel( cl_entity_t *e )
 	switch( rendermode )
 	{
 	case kRenderTransAlpha:
-		gl3_wanted.zwrite = FALSE;
+		gl3_wanted.zwrite = false;
 		// fallthrough
 	case kRenderTransColor:
 	case kRenderTransTexture:
-		gl3_wanted.blend = TRUE;
-		gl3_wanted.src = D3DBLEND_SRCALPHA;
-		gl3_wanted.dst = D3DBLEND_INVSRCALPHA;
+		gl3_wanted.blend = true;
+		gl3_wanted.src = GL_SRC_ALPHA;
+		gl3_wanted.dst = GL_ONE_MINUS_SRC_ALPHA;
 		break;
 	case kRenderGlow:
-		gl3_wanted.ztest = FALSE;
+		gl3_wanted.ztest = false;
 		// fallthrough
 	case kRenderTransAdd:
-		gl3_wanted.blend = TRUE;
-		gl3_wanted.src = D3DBLEND_SRCALPHA;
-		gl3_wanted.dst = D3DBLEND_ONE;
-		gl3_wanted.zwrite = FALSE;
+		gl3_wanted.blend = true;
+		gl3_wanted.src = GL_SRC_ALPHA;
+		gl3_wanted.dst = GL_ONE;
+		gl3_wanted.zwrite = false;
 		break;
 	default:
-		gl3_wanted.blend = FALSE;
+		gl3_wanted.blend = false;
 		break;
 	}
 
-	gl3_wanted.alphatest = TRUE;
+	gl3_wanted.alphatest = true;
 	gl3_wanted.alpharef = 0;
 
 	// rendercolor 0 0 0 is a Valve Hammer Editor bug: white
@@ -451,7 +451,7 @@ void R_GL3DrawSpriteModel( cl_entity_t *e )
 		break;
 	}
 
-	gl3_wanted.cull = psprite->facecull == SPR_CULL_NONE ? D3DCULL_NONE : GL3_CULL_FRONT;
+	gl3_wanted.cull = psprite->facecull == SPR_CULL_NONE ? GL3_CULL_NONE : GL3_CULL_FRONT;
 
 	if( visible && oldframe == frame )
 	{
@@ -484,26 +484,26 @@ void R_GL3DrawSpriteModel( cl_entity_t *e )
 	// the sprite 'lightmap': multiplies what the first pass drew (where it wrote its depth) by the light
 	if( lightmap && visible )
 	{
-		gl3_wanted.blend = r_lightmap->value ? FALSE : TRUE;
-		gl3_wanted.zfunc = D3DCMP_EQUAL;
-		gl3_wanted.alphatest = FALSE;
-		gl3_wanted.src = D3DBLEND_ZERO;
-		gl3_wanted.dst = D3DBLEND_SRCCOLOR;
+		gl3_wanted.blend = r_lightmap->value ? false : true;
+		gl3_wanted.zfunc = GL_EQUAL;
+		gl3_wanted.alphatest = false;
+		gl3_wanted.src = GL_ZERO;
+		gl3_wanted.dst = GL_SRC_COLOR;
 		R_GL3TriColor4f( color2[0], color2[1], color2[2], gl3_tr.blend );
 		R_GL3Bind( gl3_white_texture );
 		R_DrawSpriteQuad( frame, origin, v_right, v_up, scale );
-		gl3_wanted.zfunc = D3DCMP_LESSEQUAL;
-		gl3_wanted.blend = FALSE;
+		gl3_wanted.zfunc = GL_LEQUAL;
+		gl3_wanted.blend = false;
 	}
 
 	gl3_wanted.cull = GL3_CULL_FRONT;
-	gl3_wanted.alphatest = FALSE;
+	gl3_wanted.alphatest = false;
 	gl3_wanted.alpharef = 0;
-	gl3_wanted.zwrite = TRUE;
+	gl3_wanted.zwrite = true;
 
 	if( rendermode != kRenderNormal )
 	{
-		gl3_wanted.blend = FALSE;
-		gl3_wanted.ztest = TRUE;
+		gl3_wanted.blend = false;
+		gl3_wanted.ztest = true;
 	}
 }

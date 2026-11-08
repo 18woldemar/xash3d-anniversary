@@ -657,7 +657,8 @@ static qboolean R_BeamComputePoint( int beamEnt, vec3_t pt )
 		return false;
 	}
 
-	if( attach > 0 )
+	// the attachment number comes from the server, and it has four bits where an entity has four attachments
+	if( attach > 0 && attach <= (int)ARRAYSIZE( ent->attachment ))
 		VectorCopy( ent->attachment[attach - 1], pt );
 	else if( ent->index == ( gp_cl->playernum + 1 ))
 		VectorCopy( gp_cl->simorg, pt );
@@ -840,19 +841,19 @@ static void R_BeamDraw( BEAM *pbeam, float frametime )
 	switch( pbeam->type )
 	{
 	case TE_BEAMTORUS:
-		gl3_wanted.cull = D3DCULL_NONE;
+		gl3_wanted.cull = GL3_CULL_NONE;
 		R_GL3TriBegin( TRI_TRIANGLE_STRIP );
 		R_DrawTorus( pbeam->source, pbeam->delta, pbeam->width, pbeam->amplitude, pbeam->freq, pbeam->speed, pbeam->segments );
 		R_GL3TriEnd();
 		break;
 	case TE_BEAMDISK:
-		gl3_wanted.cull = D3DCULL_NONE;
+		gl3_wanted.cull = GL3_CULL_NONE;
 		R_GL3TriBegin( TRI_TRIANGLE_STRIP );
 		R_DrawDisk( pbeam->source, pbeam->delta, pbeam->width, pbeam->amplitude, pbeam->freq, pbeam->speed, pbeam->segments );
 		R_GL3TriEnd();
 		break;
 	case TE_BEAMCYLINDER:
-		gl3_wanted.cull = D3DCULL_NONE;
+		gl3_wanted.cull = GL3_CULL_NONE;
 		R_GL3TriBegin( TRI_TRIANGLE_STRIP );
 		R_DrawCylinder( pbeam->source, pbeam->delta, pbeam->width, pbeam->amplitude, pbeam->freq, pbeam->speed, pbeam->segments );
 		R_GL3TriEnd();
@@ -869,7 +870,7 @@ static void R_BeamDraw( BEAM *pbeam, float frametime )
 		R_GL3TriEnd();
 		break;
 	case TE_BEAMRING:
-		gl3_wanted.cull = D3DCULL_NONE;
+		gl3_wanted.cull = GL3_CULL_NONE;
 		R_GL3TriBegin( TRI_TRIANGLE_STRIP );
 		R_DrawRing( pbeam->source, pbeam->delta, pbeam->width, pbeam->amplitude, pbeam->freq, pbeam->speed, pbeam->segments );
 		R_GL3TriEnd();
@@ -980,7 +981,7 @@ void R_GL3DrawBeams( int fTrans, BEAM *active_beams )
 {
 	const gl3_drawlist_t *list = gl3_tr.draw_list;
 
-	gl3_wanted.zwrite = fTrans ? FALSE : TRUE;
+	gl3_wanted.zwrite = fTrans ? false : true;
 
 	// server beams keep everything in their entity
 	for( uint i = 0; i < list->num_beams; i++ )
@@ -995,5 +996,5 @@ void R_GL3DrawBeams( int fTrans, BEAM *active_beams )
 			R_BeamDraw( pBeam, gp_cl->time - gp_cl->oldtime );
 	}
 
-	gl3_wanted.zwrite = TRUE;
+	gl3_wanted.zwrite = true;
 }
