@@ -272,6 +272,7 @@ static qboolean R_VKPickFormat( void )
 			if( FBitSet( props.optimalTilingFeatures, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT ))
 			{
 				vk.depth_format = depths[i];
+				gEngfuncs.Con_Reportf( "ref_vk: depth buffer %s\n", depths[i] == VK_FORMAT_D32_SFLOAT ? "D32" : "D24" );
 				return true;
 			}
 		}
@@ -281,20 +282,23 @@ static qboolean R_VKPickFormat( void )
 	return false;
 }
 
-static VkRenderPass R_VKMakeSwapPass( qboolean clear )
+static VkRenderPass R_VKMakePass( int target, qboolean clear )
 {
 	VkRenderPass pass = VK_NULL_HANDLE;
+	const qboolean scene = target == VK_TARGET_SCENE;
+	// the scene is read by the 2D part that follows it, the swapchain goes on to be presented
+	const VkImageLayout rest = scene ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 	const VkAttachmentDescription attachments[2] =
 	{
 		{
-			.format = vk.format,
+			.format = scene ? VK_FORMAT_B8G8R8A8_UNORM : vk.format,
 			.samples = VK_SAMPLE_COUNT_1_BIT,
 			.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
 			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
 			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			.initialLayout = clear ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.initialLayout = clear ? VK_IMAGE_LAYOUT_UNDEFINED : rest,
+			.finalLayout = rest,
 		},
 		{
 			.format = vk.depth_format,
@@ -325,7 +329,7 @@ static VkRenderPass R_VKMakeSwapPass( qboolean clear )
 		{
 			.srcSubpass = VK_SUBPASS_EXTERNAL,
 			.dstSubpass = 0,
-			.srcStageMask = outputs,
+			.srcStageMask = outputs | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 			.dstStageMask = outputs | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 			.srcAccessMask = writes,
 			.dstAccessMask = writes | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
@@ -334,9 +338,9 @@ static VkRenderPass R_VKMakeSwapPass( qboolean clear )
 			.srcSubpass = 0,
 			.dstSubpass = VK_SUBPASS_EXTERNAL,
 			.srcStageMask = outputs,
-			.dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+			.dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 			.srcAccessMask = writes,
-			.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+			.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
 		},
 	};
 	const VkRenderPassCreateInfo info =
@@ -356,10 +360,19 @@ static VkRenderPass R_VKMakeSwapPass( qboolean clear )
 
 static qboolean R_VKCreateRenderPasses( void )
 {
-	vk.pass_clear = R_VKMakeSwapPass( true );
-	vk.pass_load = R_VKMakeSwapPass( false );
-	return vk.pass_clear && vk.pass_load;
+	for( int i = 0; i < VK_TARGET_COUNT; i++ )
+	{
+		vk.pass_clear[i] = R_VKMakePass( i, true );
+		vk.pass_load[i] = R_VKMakePass( i, false );
+
+		if( !vk.pass_clear[i] || !vk.pass_load[i] )
+			return false;
+	}
+
+	return true;
 }
+
+static void R_VKFreeSceneTarget( void );
 
 static void R_VKFreeDepth( void )
 {
@@ -452,7 +465,7 @@ static qboolean R_VKCreateSwapchainImages( void )
 		VkFramebufferCreateInfo framebuffer =
 		{
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-			.renderPass = vk.pass_clear,
+			.renderPass = vk.pass_clear[VK_TARGET_SWAP],
 			.attachmentCount = ARRAYSIZE( attachments ),
 			.pAttachments = attachments,
 			.width = vk.extent.width,
@@ -649,6 +662,7 @@ void R_GL3DestroyDevice( void )
 		vkDeviceWaitIdle( vk.device );
 
 		R_VKFreeSwapchainImages();
+		R_VKFreeSceneTarget();
 		R_VKShutdownBackend();
 
 		if( vk.swapchain )
@@ -664,10 +678,13 @@ void R_GL3DestroyDevice( void )
 
 		if( vk.pool )
 			vkDestroyCommandPool( vk.device, vk.pool, NULL );
-		if( vk.pass_clear )
-			vkDestroyRenderPass( vk.device, vk.pass_clear, NULL );
-		if( vk.pass_load )
-			vkDestroyRenderPass( vk.device, vk.pass_load, NULL );
+		for( int i = 0; i < VK_TARGET_COUNT; i++ )
+		{
+			if( vk.pass_clear[i] )
+				vkDestroyRenderPass( vk.device, vk.pass_clear[i], NULL );
+			if( vk.pass_load[i] )
+				vkDestroyRenderPass( vk.device, vk.pass_load[i], NULL );
+		}
 
 		vkDestroyDevice( vk.device, NULL );
 	}
@@ -800,37 +817,44 @@ static qboolean R_VKAcquire( void )
 
 qboolean R_VKEnsurePass( void )
 {
+	const int target = vk.target;
+
 	if( vk.pass_open )
 		return true;
 
-	if( vk.skip )
-		return false;
-
-	if( !vk.acquired && !R_VKAcquire( ))
+	if( target == VK_TARGET_SWAP )
 	{
-		vk.skip = true;
-		return false;
+		if( vk.skip )
+			return false;
+
+		if( !vk.acquired && !R_VKAcquire( ))
+		{
+			vk.skip = true;
+			return false;
+		}
 	}
 
 	{
+		const qboolean scene = target == VK_TARGET_SCENE;
 		const VkClearValue clear[2] =
 		{
-			{ .color = { .float32 = { vk.clear[0], vk.clear[1], vk.clear[2], 1.0f }}},
+			{ .color = { .float32 = { scene ? 0.0f : vk.clear[0], scene ? 0.0f : vk.clear[1], scene ? 0.0f : vk.clear[2], 1.0f }}},
 			{ .depthStencil = { 1.0f, 0 }},
 		};
 		const VkRenderPassBeginInfo pass =
 		{
 			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-			.renderPass = vk.started ? vk.pass_load : vk.pass_clear,
-			.framebuffer = vk.framebuffers[vk.image_index],
-			.renderArea = { { 0, 0 }, vk.extent },
+			.renderPass = vk.started[target] ? vk.pass_load[target] : vk.pass_clear[target],
+			.framebuffer = scene ? vk.scene_framebuffer : vk.framebuffers[vk.image_index],
+			.renderArea = { { 0, 0 }, scene ? vk.scene_extent : vk.extent },
 			.clearValueCount = ARRAYSIZE( clear ),
 			.pClearValues = clear,
 		};
 
 		vkCmdBeginRenderPass( R_VKCmd( ), &pass, VK_SUBPASS_CONTENTS_INLINE );
 		vk.pass_open = true;
-		vk.started = true;
+		vk.started[target] = true;
+		R_VKMarkViewportDirty();
 	}
 
 	return true;
@@ -859,7 +883,7 @@ void R_GL3BackendClearBuffers( uint mask )
 	VkClearAttachment attachments[2];
 	uint32_t count = 0;
 
-	if( !vk.started || !R_VKEnsurePass( ))
+	if( !vk.started[vk.target] || !R_VKEnsurePass( ))
 		return;
 
 	if( FBitSet( mask, GL3_CLEAR_COLOR ))
@@ -884,7 +908,7 @@ void R_GL3BackendClearBuffers( uint mask )
 
 	if( count )
 	{
-		const VkClearRect rect = { { { 0, 0 }, vk.extent }, 0, 1 };
+		const VkClearRect rect = { { { 0, 0 }, vk.target == VK_TARGET_SCENE ? vk.scene_extent : vk.extent }, 0, 1 };
 
 		vkCmdClearAttachments( R_VKCmd( ), count, attachments, 1, &rect );
 	}
@@ -977,7 +1001,8 @@ void R_GL3Present( void )
 	}
 
 	vk.cmd_open = vk.upload_open = false;
-	vk.acquired = vk.started = vk.skip = false;
+	vk.acquired = vk.skip = false;
+	memset( vk.started, 0, sizeof( vk.started ));
 	vk.serial++;
 
 	// on to the next frame, and everything of it is idle from here
@@ -990,36 +1015,151 @@ void R_GL3Present( void )
 }
 
 /*
-The scene target arrives with the frame's passes at stage 2 onward; until then the core has nothing to draw
-into and these keep it walking.
+==============================================================================
+
+THE SCENE TARGET
+
+Unlike ref_gl3, the 3D part always goes through it: an image that is not flipped has the memory of a GL framebuffer,
+so the derivatives in the shaders and the upside-down scene quad of the 2D part come out as they do on GL.
+
+==============================================================================
 */
+static void R_VKFreeSceneTarget( void )
+{
+	if( vk.scene_framebuffer )
+		vkDestroyFramebuffer( vk.device, vk.scene_framebuffer, NULL );
+	if( vk.scene_depth_view )
+		vkDestroyImageView( vk.device, vk.scene_depth_view, NULL );
+	if( vk.scene_depth )
+		vkDestroyImage( vk.device, vk.scene_depth, NULL );
+	R_VKFreeMemory( &vk.scene_depth_memory );
+	vk.scene_framebuffer = VK_NULL_HANDLE;
+	vk.scene_depth_view = VK_NULL_HANDLE;
+	vk.scene_depth = VK_NULL_HANDLE;
+}
+
+// ponytail: one sample and 8 bits for now; multisampling and the 16 bit target come with the frame stage
 qboolean R_GL3SetMSAA( int samples )
 {
+	const int width = gpGlobals->width, height = gpGlobals->height;
+	VkImageView color_view;
+	gl3_handle_t color;
+
+	vkDeviceWaitIdle( vk.device );
+
+	if( vk.scene_texture )
+		R_GL3FreeTexture( vk.scene_texture );
+	vk.scene_texture = 0;
+	vk.scene_pending = vk.scene_active = vk.scene_resolved = false;
+	R_VKFreeSceneTarget();
+
+	color = R_VKCreateRenderTexture( VK_FORMAT_B8G8R8A8_UNORM, width, height, &color_view );
+
+	{
+		const VkImageCreateInfo image =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.imageType = VK_IMAGE_TYPE_2D,
+			.format = vk.depth_format,
+			.extent = { (uint32_t)width, (uint32_t)height, 1 },
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.tiling = VK_IMAGE_TILING_OPTIMAL,
+			.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		};
+
+		if( !R_VKCheck( vkCreateImage( vk.device, &image, NULL, &vk.scene_depth ), "vkCreateImage" )
+			|| !R_VKAllocImageMemory( vk.scene_depth, &vk.scene_depth_memory ))
+			return false;
+	}
+
+	{
+		const VkImageViewCreateInfo view =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = vk.scene_depth,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = vk.depth_format,
+			.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
+		};
+
+		if( !R_VKCheck( vkCreateImageView( vk.device, &view, NULL, &vk.scene_depth_view ), "vkCreateImageView" ))
+			return false;
+	}
+
+	{
+		const VkImageView attachments[2] = { color_view, vk.scene_depth_view };
+		const VkFramebufferCreateInfo framebuffer =
+		{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = vk.pass_clear[VK_TARGET_SCENE],
+			.attachmentCount = ARRAYSIZE( attachments ),
+			.pAttachments = attachments,
+			.width = (uint32_t)width,
+			.height = (uint32_t)height,
+			.layers = 1,
+		};
+
+		if( !R_VKCheck( vkCreateFramebuffer( vk.device, &framebuffer, NULL, &vk.scene_framebuffer ), "vkCreateFramebuffer" ))
+			return false;
+	}
+
+	vk.scene_extent.width = width;
+	vk.scene_extent.height = height;
+	vk.scene_texture = R_GL3WrapTexture( "*scene", color, width, height, TF_NEAREST | TF_CLAMP | TF_NOMIPMAP );
 	return true;
 }
 
 void R_GL3BeginSceneTarget( void )
 {
+	if( vk.scene_framebuffer && !vk.scene_active )
+		vk.scene_pending = true;
 }
 
 void R_GL3EnsureSceneTarget( void )
 {
+	if( !vk.scene_pending || vk.scene_active )
+		return;
+
+	vk.scene_pending = false;
+	R_GL3DrawReset();
+	R_VKEndPass();
+	vk.target = VK_TARGET_SCENE;
+	vk.scene_active = true;
+	R_GL3BackendViewport( 0, 0, vk.scene_extent.width, vk.scene_extent.height );
 }
 
 void R_GL3EndSceneTarget( void )
 {
+	vk.scene_pending = false;
+
+	if( !vk.scene_active )
+		return;
+
+	R_GL3DrawReset();
+	R_VKEnsurePass(); // a view that drew nothing still leaves a cleared picture for the 2D part to read
+	R_VKEndPass();
+	vk.scene_active = false;
+	vk.target = VK_TARGET_SWAP;
+	vk.scene_resolved = true;
 }
 
 qboolean R_GL3SceneTargetActive( void )
 {
-	return false;
+	return vk.scene_active;
 }
 
+// the shadow map's pass comes with the frame stage
 void R_GL3RestoreBackBuffer( void )
 {
 }
 
 int R_GL3TakeSceneTarget( void )
 {
-	return 0;
+	const qboolean resolved = vk.scene_resolved;
+
+	vk.scene_resolved = false;
+	return resolved ? vk.scene_texture : 0;
 }

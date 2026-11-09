@@ -25,7 +25,6 @@ does with its dlight block.
 */
 
 #include "r_local.h"
-#include "r_gl.h"
 #include "atlas.h"
 
 #define GL3_MAX_PAGES        16
@@ -35,12 +34,7 @@ does with its dlight block.
 
 typedef struct
 {
-	short x, y, w, h;
-} gl3_rect_t;
-
-typedef struct
-{
-	GLuint             tex;
+	gl3_handle_t       tex;
 	gl3_rect_t          rects[GL3_PAGE_RECTS];
 	int                numrects;
 	qboolean           whole; // too many rectangles: the whole page
@@ -66,7 +60,7 @@ static struct
 	// dynamic lights
 	atlas_t            datlas;
 	uint32_t           dluxels[GL3_DLIGHT_SIZE * GL3_DLIGHT_SIZE];
-	GLuint             dtexture;
+	gl3_handle_t       dtexture;
 	qboolean           dused;
 	qboolean           dfull;
 } gl3_lm;
@@ -323,45 +317,6 @@ static void R_GL3DirtyPage( int page, int x, int y, int w, int h )
 	R_GL3Dirty( &gl3_lm.pages[page].copy, x, y, w, h );
 }
 
-static void R_GL3WriteRows( GLuint tex, const uint32_t *luxels, int size, const gl3_rect_t *rects, int numrects, qboolean whole )
-{
-	glBindTexture( GL_TEXTURE_2D, tex );
-	glPixelStorei( GL_UNPACK_ROW_LENGTH, size );
-
-	if( whole )
-	{
-		glTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, size, size, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, luxels );
-	}
-	else
-	{
-		for( int i = 0; i < numrects; i++ )
-		{
-			const gl3_rect_t *r = &rects[i];
-
-			glTexSubImage2D( GL_TEXTURE_2D, 0, r->x, r->y, r->w, r->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, luxels + r->y * size + r->x );
-		}
-	}
-
-	glPixelStorei( GL_UNPACK_ROW_LENGTH, 0 );
-	R_GL3ForgetBindings();
-}
-
-static GLuint R_GL3CreateLightmapTexture( int size )
-{
-	GLuint tex = 0;
-
-	glGenTextures( 1, &tex );
-	glBindTexture( GL_TEXTURE_2D, tex );
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
-	R_GL3ForgetBindings();
-	return tex;
-}
-
 static void R_GL3NewPage( void )
 {
 	gl3_page_t *page;
@@ -377,7 +332,7 @@ static void R_GL3NewPage( void )
 	memset( page->luxels, 0, GL3_LIGHTMAP_SIZE * GL3_LIGHTMAP_SIZE * sizeof( *page->luxels ));
 
 	if( !page->copy.tex )
-		page->copy.tex = R_GL3CreateLightmapTexture( GL3_LIGHTMAP_SIZE );
+		page->copy.tex = R_GL3BackendCreateLightmap( GL3_LIGHTMAP_SIZE );
 	page->copy.numrects = 0;
 	page->copy.whole = true;
 
@@ -563,7 +518,7 @@ void R_GL3LightmapsCommit( void )
 
 		if( copy->whole || copy->numrects )
 		{
-			R_GL3WriteRows( copy->tex, page->luxels, GL3_LIGHTMAP_SIZE, copy->rects, copy->numrects, copy->whole );
+			R_GL3BackendWriteRows( copy->tex, page->luxels, GL3_LIGHTMAP_SIZE, copy->rects, copy->numrects, copy->whole );
 			copy->whole = false;
 			copy->numrects = 0;
 		}
@@ -573,11 +528,11 @@ void R_GL3LightmapsCommit( void )
 	{
 		gl3_rect_t used = { 0, 0, GL3_DLIGHT_SIZE, (short)gl3_lm.datlas.max_height };
 
-		R_GL3WriteRows( gl3_lm.dtexture, gl3_lm.dluxels, GL3_DLIGHT_SIZE, &used, 1, false );
+		R_GL3BackendWriteRows( gl3_lm.dtexture, gl3_lm.dluxels, GL3_DLIGHT_SIZE, &used, 1, false );
 	}
 }
 
-GLuint R_GL3LightmapTexture( int page )
+gl3_handle_t R_GL3LightmapTexture( int page )
 {
 	if( page == GL3_LIGHTMAP_DYNAMIC )
 		return gl3_lm.dtexture;
@@ -616,7 +571,7 @@ void R_GL3InitLightmaps( void )
 	gl_overbright = gEngfuncs.Cvar_Get( "gl_overbright", "0", FCVAR_ARCHIVE, "overbrights" );
 	gl3_overbright_applied = gl_overbright->value;
 	gl3_lm.pool = Mem_AllocPool( "ref_gl3 lightmaps" );
-	gl3_lm.dtexture = R_GL3CreateLightmapTexture( GL3_DLIGHT_SIZE );
+	gl3_lm.dtexture = R_GL3BackendCreateLightmap( GL3_DLIGHT_SIZE );
 }
 
 void R_GL3ShutdownLightmaps( void )
@@ -624,11 +579,11 @@ void R_GL3ShutdownLightmaps( void )
 	for( int i = 0; i < GL3_MAX_PAGES; i++ )
 	{
 		if( gl3_lm.pages[i].copy.tex )
-			glDeleteTextures( 1, &gl3_lm.pages[i].copy.tex );
+			R_GL3BackendDeleteTexture( gl3_lm.pages[i].copy.tex );
 	}
 
 	if( gl3_lm.dtexture )
-		glDeleteTextures( 1, &gl3_lm.dtexture );
+		R_GL3BackendDeleteTexture( gl3_lm.dtexture );
 
 	Mem_FreePool( &gl3_lm.pool );
 	memset( &gl3_lm, 0, sizeof( gl3_lm ));

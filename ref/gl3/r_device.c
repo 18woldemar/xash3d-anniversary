@@ -764,3 +764,131 @@ void R_GL3BackendDrawStream( int primitive, const gl3_vertex_t *vertices, int co
 	R_GL3CommitConstants();
 	glDrawArrays( primitive, 0, count );
 }
+
+/*
+==============================================================================
+
+LIGHTMAPS AND THE WORLD
+
+==============================================================================
+*/
+gl3_handle_t R_GL3BackendCreateLightmap( int size )
+{
+	GLuint tex = 0;
+
+	glGenTextures( 1, &tex );
+	glBindTexture( GL_TEXTURE_2D, tex );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
+	R_GL3ForgetBindings();
+	return tex;
+}
+
+void R_GL3BackendWriteRows( gl3_handle_t texture, const uint32_t *luxels, int size, const gl3_rect_t *rects, int numrects, qboolean whole )
+{
+	glBindTexture( GL_TEXTURE_2D, texture );
+	glPixelStorei( GL_UNPACK_ROW_LENGTH, size );
+
+	if( whole )
+	{
+		glTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, size, size, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, luxels );
+	}
+	else
+	{
+		for( int i = 0; i < numrects; i++ )
+		{
+			const gl3_rect_t *r = &rects[i];
+
+			glTexSubImage2D( GL_TEXTURE_2D, 0, r->x, r->y, r->w, r->h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, luxels + r->y * size + r->x );
+		}
+	}
+
+	glPixelStorei( GL_UNPACK_ROW_LENGTH, 0 );
+	R_GL3ForgetBindings();
+}
+
+static GLuint gl3_world_vao, gl3_world_vbo, gl3_world_ibo;
+static GLuint gl3_world_dyn_vao, gl3_world_dyn_vbo;
+
+static void R_GL3WorldVertexLayout( GLuint vbo )
+{
+	const GLsizei stride = sizeof( float ) * VERTEXSIZE;
+
+	glBindBuffer( GL_ARRAY_BUFFER, vbo );
+	glEnableVertexAttribArray( GL3_ATTR_POSITION );
+	glVertexAttribPointer( GL3_ATTR_POSITION, 3, GL_FLOAT, GL_FALSE, stride, (void *)0 );
+	glEnableVertexAttribArray( GL3_ATTR_TEXCOORD );
+	glVertexAttribPointer( GL3_ATTR_TEXCOORD, 2, GL_FLOAT, GL_FALSE, stride, (void *)( 3 * sizeof( float )));
+	glEnableVertexAttribArray( GL3_ATTR_LIGHTCOORD );
+	glVertexAttribPointer( GL3_ATTR_LIGHTCOORD, 2, GL_FLOAT, GL_FALSE, stride, (void *)( 5 * sizeof( float )));
+}
+
+void R_GL3BackendInitWorld( void )
+{
+	glGenVertexArrays( 1, &gl3_world_vao );
+	glGenVertexArrays( 1, &gl3_world_dyn_vao );
+	glGenBuffers( 1, &gl3_world_vbo );
+	glGenBuffers( 1, &gl3_world_ibo );
+	glGenBuffers( 1, &gl3_world_dyn_vbo );
+
+	glBindVertexArray( gl3_world_vao );
+	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, gl3_world_ibo );
+	R_GL3WorldVertexLayout( gl3_world_vbo );
+	glBindVertexArray( gl3_world_dyn_vao );
+	R_GL3WorldVertexLayout( gl3_world_dyn_vbo );
+	glBindVertexArray( 0 );
+}
+
+void R_GL3BackendShutdownWorld( void )
+{
+	glBindVertexArray( 0 );
+	glDeleteVertexArrays( 1, &gl3_world_vao );
+	glDeleteVertexArrays( 1, &gl3_world_dyn_vao );
+	glDeleteBuffers( 1, &gl3_world_vbo );
+	glDeleteBuffers( 1, &gl3_world_ibo );
+	glDeleteBuffers( 1, &gl3_world_dyn_vbo );
+	gl3_world_vao = gl3_world_dyn_vao = gl3_world_vbo = gl3_world_ibo = gl3_world_dyn_vbo = 0;
+}
+
+void R_GL3BackendWorldVerticesBegin( size_t bytes )
+{
+	glBindBuffer( GL_ARRAY_BUFFER, gl3_world_vbo );
+	glBufferData( GL_ARRAY_BUFFER, bytes, NULL, GL_STATIC_DRAW );
+}
+
+void R_GL3BackendWorldVerticesWrite( size_t offset, const void *data, size_t bytes )
+{
+	glBufferSubData( GL_ARRAY_BUFFER, offset, bytes, data );
+}
+
+void R_GL3BackendWorldVerticesEnd( void )
+{
+}
+
+void R_GL3BackendWorldStream( const uint32_t *indices, int numindices, const void *dynverts, size_t dynbytes )
+{
+	// a new store each time: the driver hands out fresh memory instead of waiting for the last view
+	glBindVertexArray( gl3_world_vao );
+	glBufferData( GL_ELEMENT_ARRAY_BUFFER, numindices * sizeof( *indices ), indices, GL_STREAM_DRAW );
+	glBindBuffer( GL_ARRAY_BUFFER, gl3_world_dyn_vbo );
+	glBufferData( GL_ARRAY_BUFFER, dynbytes, dynverts, GL_STREAM_DRAW );
+}
+
+void R_GL3BackendUseWorldLayout( qboolean dynamic )
+{
+	glBindVertexArray( dynamic ? gl3_world_dyn_vao : gl3_world_vao );
+}
+
+void R_GL3BackendDrawWorldIndexed( int first, int count )
+{
+	glDrawElements( GL_TRIANGLES, count, GL_UNSIGNED_INT, (void *)( first * sizeof( uint32_t )));
+}
+
+void R_GL3BackendDrawWorldArrays( int first, int count )
+{
+	glDrawArrays( GL_TRIANGLES, first, count );
+}

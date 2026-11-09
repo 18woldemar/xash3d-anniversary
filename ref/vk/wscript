@@ -11,6 +11,9 @@ PROGRAMS = [
 	( 'draw', '', False ),
 	( 'draw', '#define WARP_SCREEN 1\n', False ),
 	( 'draw', '#define WARP_WAVE 1\n', False ),
+	( 'world', '', False ),
+	( 'world', '#define WARP 1\n', False ),
+	( 'world', '#define WARP_SW 1\n', False ),
 ]
 
 PRELUDE = '''#version 450
@@ -88,7 +91,9 @@ def build(bld):
 	gl3 = bld.path.parent.find_dir('gl3')
 	shaders = gl3.find_dir('shaders').ant_glob('*.glsl')
 
-	bld(rule = compile_shaders, source = shaders, target = 'vk_shaders.h', before = ['c'])
+	# the list and the prelude are part of what the rule makes
+	bld.env.VK_PROGRAMS = repr(( PROGRAMS, PRELUDE ))
+	bld(rule = compile_shaders, source = shaders, target = 'vk_shaders.h', before = ['c'], vars = ['VK_PROGRAMS', 'GLSLANG'])
 
 	bld.shlib(
 		source = gl3.ant_glob('r_*.c', excl = 'r_device.c') + bld.path.ant_glob('*.c'),

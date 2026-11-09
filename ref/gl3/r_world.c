@@ -26,7 +26,6 @@ the index buffer once per view with a new store, so the driver never waits for t
 */
 
 #include "r_local.h"
-#include "r_gl.h"
 #include "world.glsl.h"
 #include "shadow.glsl.h"
 
@@ -74,8 +73,6 @@ static struct
 {
 	gl3_program_t *prog, *warp_prog, *warpsw_prog;
 	gl3_program_t *spot_prog, *warpswspot_prog, *shadow_prog;
-	GLuint         vao, vbo, ibo;  // the map's polygons and this view's indices
-	GLuint         dyn_vao, dyn_vbo; // this view's dynamic-lit faces and decals
 	qboolean       ib_valid;       // this view's indices reached the buffer
 	int            numverts;
 
@@ -463,8 +460,7 @@ void R_GL3WorldNewMap( void )
 		return;
 
 	R_GL3DrawReset();
-	glBindBuffer( GL_ARRAY_BUFFER, gl3_world.vbo );
-	glBufferData( GL_ARRAY_BUFFER, total * sizeof( float ) * VERTEXSIZE, NULL, GL_STATIC_DRAW );
+	R_GL3BackendWorldVerticesBegin( total * sizeof( float ) * VERTEXSIZE );
 
 	for( int i = 0; i < gp_cl->nummodels; i++ )
 	{
@@ -479,12 +475,13 @@ void R_GL3WorldNewMap( void )
 			{
 				const size_t bytes = p->numverts * VERTEXSIZE * sizeof( float );
 
-				glBufferSubData( GL_ARRAY_BUFFER, filled, bytes, p->verts[0] );
+				R_GL3BackendWorldVerticesWrite( filled, p->verts[0], bytes );
 				filled += bytes;
 			}
 		}
 	}
 
+	R_GL3BackendWorldVerticesEnd();
 	gl3_world.numverts = total;
 	gEngfuncs.Con_Reportf( "ref_gl3: world vertex buffer %d vertices, %d KB\n", total, filled >> 10 );
 }
@@ -1640,10 +1637,7 @@ void R_GL3WorldUpload( void )
 
 	// a new store each time: the driver hands out fresh memory instead of waiting for the last view
 	R_GL3DrawReset();
-	glBindVertexArray( gl3_world.vao );
-	glBufferData( GL_ELEMENT_ARRAY_BUFFER, gl3_world.numindices * sizeof( *gl3_world.indices ), gl3_world.indices, GL_STREAM_DRAW );
-	glBindBuffer( GL_ARRAY_BUFFER, gl3_world.dyn_vbo );
-	glBufferData( GL_ARRAY_BUFFER, gl3_world.numdynverts * sizeof( gl3_world.dynverts[0] ), gl3_world.dynverts, GL_STREAM_DRAW );
+	R_GL3BackendWorldStream( gl3_world.indices, gl3_world.numindices, gl3_world.dynverts, gl3_world.numdynverts * sizeof( gl3_world.dynverts[0] ));
 	gl3_world.ib_valid = true;
 }
 
@@ -1665,7 +1659,7 @@ void R_GL3WorldShadowRange( int first, int last )
 
 	R_GL3DrawReset();
 	R_GL3UseProgram( gl3_world.shadow_prog );
-	glBindVertexArray( gl3_world.vao );
+	R_GL3BackendUseWorldLayout( false );
 
 	for( int i = first; i < last; i++ )
 	{
@@ -1681,7 +1675,7 @@ void R_GL3WorldShadowRange( int first, int last )
 		}
 
 		R_GL3CommitConstants();
-		glDrawElements( GL_TRIANGLES, d->count, GL_UNSIGNED_INT, (void *)( d->first * sizeof( uint32_t )));
+		R_GL3BackendDrawWorldIndexed( d->first, d->count );
 		R_GL3CountDraw( d->count );
 	}
 
@@ -1695,7 +1689,7 @@ void R_GL3DrawWorldRange( int first, int last )
 	const float *color = NULL, *fog = NULL;
 	float lmscale[4] = { -1.0f, 0.0f, 0.0f, 0.0f };
 	int object = -1;
-	GLuint vao = 0;
+	int layout = -1;
 
 	if( first >= last || !gl3_world.numverts )
 		return;
@@ -1785,19 +1779,17 @@ void R_GL3DrawWorldRange( int first, int last )
 			continue;
 
 		{
-			const GLuint want = d->up ? gl3_world.dyn_vao : gl3_world.vao;
-
-			if( want != vao )
+			if( layout != d->up )
 			{
-				vao = want;
-				glBindVertexArray( vao );
+				layout = d->up;
+				R_GL3BackendUseWorldLayout( d->up );
 			}
 		}
 
 		R_GL3CommitConstants();
 		if( d->up )
-			glDrawArrays( GL_TRIANGLES, d->first, d->count );
-		else glDrawElements( GL_TRIANGLES, d->count, GL_UNSIGNED_INT, (void *)( d->first * sizeof( uint32_t )));
+			R_GL3BackendDrawWorldArrays( d->first, d->count );
+		else R_GL3BackendDrawWorldIndexed( d->first, d->count );
 		R_GL3CountDraw( d->count );
 	}
 
@@ -1834,19 +1826,6 @@ INIT
 ==============================================================================
 */
 // position, texture st, lightmap st of a polygon vertex (the engine's glvert2_t), for the bound vertex array
-static void R_GL3WorldVertexLayout( GLuint vbo )
-{
-	const GLsizei stride = sizeof( float ) * VERTEXSIZE;
-
-	glBindBuffer( GL_ARRAY_BUFFER, vbo );
-	glEnableVertexAttribArray( GL3_ATTR_POSITION );
-	glVertexAttribPointer( GL3_ATTR_POSITION, 3, GL_FLOAT, GL_FALSE, stride, (void *)0 );
-	glEnableVertexAttribArray( GL3_ATTR_TEXCOORD );
-	glVertexAttribPointer( GL3_ATTR_TEXCOORD, 2, GL_FLOAT, GL_FALSE, stride, (void *)( 3 * sizeof( float )));
-	glEnableVertexAttribArray( GL3_ATTR_LIGHTCOORD );
-	glVertexAttribPointer( GL3_ATTR_LIGHTCOORD, 2, GL_FLOAT, GL_FALSE, stride, (void *)( 5 * sizeof( float )));
-}
-
 qboolean R_GL3InitWorld( void )
 {
 	// ref_gl warps water once per vertex on the 64-unit grid the engine subdivides it into, which slides the
@@ -1865,18 +1844,7 @@ qboolean R_GL3InitWorld( void )
 		|| !gl3_world.warpswspot_prog || !gl3_world.shadow_prog )
 		return false;
 
-	glGenVertexArrays( 1, &gl3_world.vao );
-	glGenVertexArrays( 1, &gl3_world.dyn_vao );
-	glGenBuffers( 1, &gl3_world.vbo );
-	glGenBuffers( 1, &gl3_world.ibo );
-	glGenBuffers( 1, &gl3_world.dyn_vbo );
-
-	glBindVertexArray( gl3_world.vao );
-	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, gl3_world.ibo );
-	R_GL3WorldVertexLayout( gl3_world.vbo );
-	glBindVertexArray( gl3_world.dyn_vao );
-	R_GL3WorldVertexLayout( gl3_world.dyn_vbo );
-	glBindVertexArray( 0 );
+	R_GL3BackendInitWorld();
 	R_GL3DrawReset();
 
 	gl3_world.skytexturenum = -1;
@@ -1887,11 +1855,5 @@ void R_GL3ShutdownWorld( void )
 {
 	R_GL3FreeWorldBuffer();
 	R_GL3DrawReset();
-	glBindVertexArray( 0 );
-	glDeleteVertexArrays( 1, &gl3_world.vao );
-	glDeleteVertexArrays( 1, &gl3_world.dyn_vao );
-	glDeleteBuffers( 1, &gl3_world.vbo );
-	glDeleteBuffers( 1, &gl3_world.ibo );
-	glDeleteBuffers( 1, &gl3_world.dyn_vbo );
-	gl3_world.vao = gl3_world.dyn_vao = gl3_world.vbo = gl3_world.ibo = gl3_world.dyn_vbo = 0;
+	R_GL3BackendShutdownWorld();
 }

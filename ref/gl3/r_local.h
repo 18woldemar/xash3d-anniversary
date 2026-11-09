@@ -71,6 +71,11 @@ typedef uint gl3_handle_t;
 #define GL3_PRIM_LINES     1
 #define GL3_PRIM_TRIANGLES 4
 
+typedef struct
+{
+	short x, y, w, h;
+} gl3_rect_t;
+
 // the vertex of 2D and the triangle API, drawn through the backend's stream buffer
 typedef struct
 {
@@ -562,6 +567,17 @@ void R_GL3BackendInitDraw( void );
 void R_GL3BackendShutdownDraw( void );
 void R_GL3BackendUseDrawLayout( void );
 void R_GL3BackendDrawStream( int primitive, const gl3_vertex_t *vertices, int count ); // GL3_PRIM_*
+gl3_handle_t R_GL3BackendCreateLightmap( int size );
+void R_GL3BackendWriteRows( gl3_handle_t texture, const uint32_t *luxels, int size, const gl3_rect_t *rects, int numrects, qboolean whole );
+void R_GL3BackendInitWorld( void );
+void R_GL3BackendShutdownWorld( void );
+void R_GL3BackendWorldVerticesBegin( size_t bytes ); // the map's polygons
+void R_GL3BackendWorldVerticesWrite( size_t offset, const void *data, size_t bytes );
+void R_GL3BackendWorldVerticesEnd( void );
+void R_GL3BackendWorldStream( const uint32_t *indices, int numindices, const void *dynverts, size_t dynbytes ); // this view's
+void R_GL3BackendUseWorldLayout( qboolean dynamic ); // the polygons with this view's indices, or the dynamic vertices
+void R_GL3BackendDrawWorldIndexed( int first, int count );
+void R_GL3BackendDrawWorldArrays( int first, int count );
 
 qboolean R_GL3CreateDevice( int width, int height );
 void R_GL3DestroyDevice( void );

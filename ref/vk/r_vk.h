@@ -109,7 +109,10 @@ GNU General Public License for more details.
 	X( vkCmdSetScissor ) \
 	X( vkCmdSetDepthBias ) \
 	X( vkCmdClearAttachments ) \
-	X( vkCmdDraw )
+	X( vkCmdDraw ) \
+	X( vkCmdDrawIndexed ) \
+	X( vkCmdBindIndexBuffer ) \
+	X( vkCmdCopyBuffer )
 
 #define VK_DECLARE( name ) extern PFN_##name name;
 VK_GLOBAL_FUNCTIONS( VK_DECLARE )
@@ -156,6 +159,20 @@ typedef struct
 	vk_allocation_t memory;
 } vk_dead_image_t;
 
+typedef struct
+{
+	VkBuffer       buffer;
+	VkDeviceMemory memory;
+} vk_dead_buffer_t;
+
+// what the 3D part or the 2D part draws into
+enum
+{
+	VK_TARGET_SWAP = 0,
+	VK_TARGET_SCENE,
+	VK_TARGET_COUNT
+};
+
 // A frame's resources are idle whenever it is the current one: R_GL3Present waits for it right after moving on to it.
 typedef struct
 {
@@ -168,8 +185,10 @@ typedef struct
 	VkDescriptorPool pools[VK_MAX_POOLS];
 	int              num_pools, current_pool;
 
-	vk_dead_image_t dead[VK_MAX_DESTROY];
-	int             num_dead;
+	vk_dead_image_t  dead[VK_MAX_DESTROY];
+	int              num_dead;
+	vk_dead_buffer_t dead_buffers[16];
+	int              num_dead_buffers;
 } vk_frame_t;
 
 typedef struct
@@ -186,7 +205,16 @@ typedef struct
 
 	VkFormat        format, depth_format;
 	VkColorSpaceKHR colorspace;
-	VkRenderPass    pass_clear, pass_load; // the swapchain's: its first pass of a frame, and any after a break
+	VkRenderPass    pass_clear[VK_TARGET_COUNT], pass_load[VK_TARGET_COUNT]; // a target's first pass of a frame, and any after a break
+
+	// the 3D part's picture: its memory is row for row a GL framebuffer's, which is why nothing flips here
+	VkFramebuffer   scene_framebuffer;
+	VkImage         scene_depth;
+	VkImageView     scene_depth_view;
+	vk_allocation_t scene_depth_memory;
+	VkExtent2D      scene_extent;
+	int             scene_texture; // its slot in the core's texture table
+	qboolean        scene_pending, scene_active, scene_resolved;
 
 	VkSwapchainKHR  swapchain;
 	uint32_t        num_images;
@@ -208,7 +236,8 @@ typedef struct
 	qboolean   cmd_open, upload_open, pass_open;
 	qboolean   skip;         // no image to draw on this frame
 	qboolean   acquired;
-	qboolean   started;      // this frame's image has had its first pass
+	qboolean   started[VK_TARGET_COUNT]; // this frame's picture has had its first pass
+	int        target;
 	uint32_t   image_index;
 	float      clear[3];
 
@@ -232,6 +261,8 @@ void R_VKResetFrame( vk_frame_t *frame ); // its work has finished
 qboolean R_VKAllocImageMemory( VkImage image, vk_allocation_t *out );
 void R_VKFreeMemory( vk_allocation_t *allocation );
 void R_VKMarkStateDirty( void ); // a new command buffer has no dynamic state yet
+void R_VKMarkViewportDirty( void ); // another target
+gl3_handle_t R_VKCreateRenderTexture( VkFormat format, int width, int height, VkImageView *view );
 
 // the GL entry points, answering nothing, until each file's drawing has moved to the backend (r_vk_glstub.c)
 void R_VKInstallGLStubs( void );

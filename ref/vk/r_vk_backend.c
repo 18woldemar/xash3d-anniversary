@@ -446,28 +446,22 @@ static VkSampler R_VKSampler( qboolean filtered, qboolean clamp, int mipcap, int
 	return *slot;
 }
 
-gl3_handle_t R_GL3BackendCreateTexture( int width, int height, int levels )
+static gl3_handle_t R_VKNewSlot( void )
 {
-	vk_image_t *image;
-	gl3_handle_t handle = 0;
-
 	for( int i = 1; i < vk_num_images; i++ )
 	{
 		if( !vk_images[i].image )
-		{
-			handle = i;
-			break;
-		}
+			return i;
 	}
 
-	if( !handle )
-	{
-		if( vk_num_images >= VK_MAX_IMAGES )
-			gEngfuncs.Host_Error( "ref_vk: out of texture slots\n" );
-		handle = vk_num_images++;
-	}
+	if( vk_num_images >= VK_MAX_IMAGES )
+		gEngfuncs.Host_Error( "ref_vk: out of texture slots\n" );
 
-	image = &vk_images[handle];
+	return vk_num_images++;
+}
+
+static void R_VKMakeImage( vk_image_t *image, VkFormat format, int width, int height, int levels, VkImageUsageFlags usage )
+{
 	memset( image, 0, sizeof( *image ));
 	image->levels = levels;
 	image->sampler = R_VKSampler( true, false, 15, 1 );
@@ -477,13 +471,13 @@ gl3_handle_t R_GL3BackendCreateTexture( int width, int height, int levels )
 		{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 			.imageType = VK_IMAGE_TYPE_2D,
-			.format = VK_FORMAT_B8G8R8A8_UNORM,
+			.format = format,
 			.extent = { (uint32_t)width, (uint32_t)height, 1 },
 			.mipLevels = (uint32_t)levels,
 			.arrayLayers = 1,
 			.samples = VK_SAMPLE_COUNT_1_BIT,
 			.tiling = VK_IMAGE_TILING_OPTIMAL,
-			.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			.usage = usage,
 			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		};
 
@@ -498,14 +492,42 @@ gl3_handle_t R_GL3BackendCreateTexture( int width, int height, int levels )
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 			.image = image->image,
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = VK_FORMAT_B8G8R8A8_UNORM,
+			.format = format,
 			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, (uint32_t)levels, 0, 1 },
 		};
 
 		if( !R_VKCheck( vkCreateImageView( vk.device, &info, NULL, &image->view ), "vkCreateImageView" ))
 			gEngfuncs.Host_Error( "ref_vk: can't make a texture view\n" );
 	}
+}
 
+gl3_handle_t R_GL3BackendCreateTexture( int width, int height, int levels )
+{
+	const gl3_handle_t handle = R_VKNewSlot();
+
+	R_VKMakeImage( &vk_images[handle], VK_FORMAT_B8G8R8A8_UNORM, width, height, levels, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT );
+	return handle;
+}
+
+// a picture a pass draws and the 2D part reads: created ready, it never goes through an upload
+gl3_handle_t R_VKCreateRenderTexture( VkFormat format, int width, int height, VkImageView *view )
+{
+	const gl3_handle_t handle = R_VKNewSlot();
+	vk_image_t *image = &vk_images[handle];
+
+	R_VKMakeImage( image, format, width, height, 1, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT );
+	image->ready = 1;
+	*view = image->view;
+	return handle;
+}
+
+gl3_handle_t R_GL3BackendCreateLightmap( int size )
+{
+	const gl3_handle_t handle = R_VKNewSlot();
+	vk_image_t *image = &vk_images[handle];
+
+	R_VKMakeImage( image, VK_FORMAT_B8G8R8A8_UNORM, size, size, 1, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT );
+	image->sampler = R_VKSampler( true, true, 0, 1 );
 	return handle;
 }
 
@@ -557,14 +579,12 @@ void R_GL3BackendDeleteTexture( gl3_handle_t texture )
 	memset( image, 0, sizeof( *image ));
 }
 
-uint32_t *R_GL3BackendLockLevel( gl3_handle_t texture, int level, int width, int height )
+// A level load uploads far more than one frame's worth with no frame in between: what is there goes to the GPU and
+// the ring starts over. Inside a frame the commands being recorded may still read it, so it grows instead.
+static byte *R_VKStaging( VkDeviceSize bytes, VkDeviceSize *offset, vk_chunk_t **chunk )
 {
-	vk_frame_t *frame = &vk.frames[vk.frame];
-	const VkDeviceSize bytes = (VkDeviceSize)width * height * 4;
-	vk_ring_t *ring = &frame->staging;
+	vk_ring_t *ring = &vk.frames[vk.frame].staging;
 
-	// A level load uploads far more than one frame's worth with no frame in between: what is there goes to the
-	// GPU and the ring starts over. Inside a frame the commands being recorded may still read it, so it grows.
 	if( !vk.cmd_open && ring->num_chunks && ring->offset + bytes > ring->chunks[ring->current].size )
 	{
 		R_VKFlushUploads();
@@ -572,11 +592,16 @@ uint32_t *R_GL3BackendLockLevel( gl3_handle_t texture, int level, int width, int
 		ring->offset = 0;
 	}
 
+	return R_VKRingAlloc( ring, bytes, 16, offset, chunk );
+}
+
+uint32_t *R_GL3BackendLockLevel( gl3_handle_t texture, int level, int width, int height )
+{
 	vk_lock.image = R_VKImage( texture );
 	vk_lock.level = level;
 	vk_lock.width = width;
 	vk_lock.height = height;
-	return (uint32_t *)R_VKRingAlloc( ring, bytes, 16, &vk_lock.offset, &vk_lock.chunk );
+	return (uint32_t *)R_VKStaging( (VkDeviceSize)width * height * 4, &vk_lock.offset, &vk_lock.chunk );
 }
 
 static void R_VKLevelBarrier( VkCommandBuffer cmd, vk_image_t *image, int level, VkImageLayout from, VkImageLayout to,
@@ -598,19 +623,14 @@ static void R_VKLevelBarrier( VkCommandBuffer cmd, vk_image_t *image, int level,
 	vkCmdPipelineBarrier( cmd, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &barrier );
 }
 
+#define VK_SHADER_READERS ( VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT )
+
 // A texture this frame has already read has to keep the old contents for those draws: the copy happens here, between
 // them, breaking the pass. Any other goes ahead of the whole frame.
-void R_GL3BackendUnlockLevel( void )
+static VkCommandBuffer R_VKBeginImageCopy( vk_image_t *image, int level )
 {
-	vk_image_t *image = vk_lock.image;
-	const VkPipelineStageFlags readers = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	const qboolean ready = FBitSet( image->ready, 1u << level ) ? true : false;
 	VkCommandBuffer cmd;
-	qboolean ready;
-
-	if( !image )
-		return;
-
-	ready = FBitSet( image->ready, 1u << vk_lock.level ) ? true : false;
 
 	if( image->used == vk.serial + 1 && vk.cmd_open )
 	{
@@ -619,10 +639,31 @@ void R_GL3BackendUnlockLevel( void )
 	}
 	else cmd = R_VKUploadCmd();
 
-	R_VKLevelBarrier( cmd, image, vk_lock.level,
+	R_VKLevelBarrier( cmd, image, level,
 		ready ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		ready ? VK_ACCESS_SHADER_READ_BIT : 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-		ready ? readers : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT );
+		ready ? VK_SHADER_READERS : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT );
+	return cmd;
+}
+
+static void R_VKEndImageCopy( VkCommandBuffer cmd, vk_image_t *image, int level )
+{
+	R_VKLevelBarrier( cmd, image, level,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_SHADER_READERS );
+	SetBits( image->ready, 1u << level );
+}
+
+void R_GL3BackendUnlockLevel( void )
+{
+	vk_image_t *image = vk_lock.image;
+	VkCommandBuffer cmd;
+
+	if( !image )
+		return;
+
+	cmd = R_VKBeginImageCopy( image, vk_lock.level );
 
 	{
 		const VkBufferImageCopy region =
@@ -635,12 +676,56 @@ void R_GL3BackendUnlockLevel( void )
 		vkCmdCopyBufferToImage( cmd, vk_lock.chunk->buffer, image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region );
 	}
 
-	R_VKLevelBarrier( cmd, image, vk_lock.level,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-		VK_PIPELINE_STAGE_TRANSFER_BIT, readers );
+	R_VKEndImageCopy( cmd, image, vk_lock.level );
+}
 
-	SetBits( image->ready, 1u << vk_lock.level );
+void R_GL3BackendWriteRows( gl3_handle_t texture, const uint32_t *luxels, int size, const gl3_rect_t *rects, int numrects, qboolean whole )
+{
+	vk_image_t *image = R_VKImage( texture );
+	const gl3_rect_t all = { 0, 0, (short)size, (short)size };
+	VkDeviceSize bytes = 0, offset;
+	vk_chunk_t *chunk;
+	uint32_t *out;
+	VkCommandBuffer cmd;
+
+	if( !image )
+		return;
+
+	if( whole )
+	{
+		rects = &all;
+		numrects = 1;
+	}
+
+	if( numrects <= 0 )
+		return;
+
+	// one allocation for all of them: making room can submit the commands, which must not happen halfway
+	for( int i = 0; i < numrects; i++ )
+		bytes += (VkDeviceSize)rects[i].w * rects[i].h * 4;
+
+	out = (uint32_t *)R_VKStaging( bytes, &offset, &chunk );
+	cmd = R_VKBeginImageCopy( image, 0 );
+
+	for( int i = 0; i < numrects; i++ )
+	{
+		const gl3_rect_t *r = &rects[i];
+		const VkBufferImageCopy region =
+		{
+			.bufferOffset = offset,
+			.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+			.imageOffset = { r->x, r->y, 0 },
+			.imageExtent = { (uint32_t)r->w, (uint32_t)r->h, 1 },
+		};
+
+		for( int y = 0; y < r->h; y++, out += r->w )
+			memcpy( out, luxels + ( r->y + y ) * size + r->x, r->w * sizeof( *out ));
+
+		offset += (VkDeviceSize)r->w * r->h * 4;
+		vkCmdCopyBufferToImage( cmd, chunk->buffer, image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region );
+	}
+
+	R_VKEndImageCopy( cmd, image, 0 );
 }
 
 void R_GL3BackendBindTexture( int unit, gl3_handle_t texture )
@@ -677,8 +762,8 @@ PROGRAMS AND PIPELINES
 */
 enum
 {
-	VK_LAYOUT_NONE = 0,
-	VK_LAYOUT_DRAW,
+	VK_LAYOUT_DRAW = 0,
+	VK_LAYOUT_WORLD,
 };
 
 struct gl3_program_s
@@ -695,7 +780,7 @@ struct gl3_program_s
 
 typedef struct
 {
-	uint32_t program, layout, primitive;
+	uint32_t program, layout, primitive, target;
 	uint32_t blend, src, dst, zwrite, ztest, zfunc, cull, bias;
 } vk_pipeline_key_t;
 
@@ -724,6 +809,13 @@ static VkPipeline      vk_bound_pipeline;
 static VkDescriptorSet vk_texture_set;
 static qboolean        vk_viewport_dirty;
 static float           vk_bias_applied[2];
+static VkBuffer        vk_bound_buffer, vk_bound_index;
+static VkDeviceSize    vk_bound_offset, vk_bound_index_offset;
+
+void R_VKMarkViewportDirty( void )
+{
+	vk_viewport_dirty = true;
+}
 
 void R_VKMarkStateDirty( void )
 {
@@ -732,6 +824,8 @@ void R_VKMarkStateDirty( void )
 	vk_viewport_dirty = true;
 	vk_bias_applied[0] = vk_bias_applied[1] = -1e9f;
 	vk_textures_dirty = true;
+	vk_bound_buffer = VK_NULL_HANDLE;
+	vk_bound_index = VK_NULL_HANDLE;
 }
 
 static VkShaderModule R_VKModule( const uint32_t *code, size_t size )
@@ -823,16 +917,22 @@ static VkCompareOp R_VKCompare( uint f )
 
 static VkPipeline R_VKCreatePipeline( const vk_pipeline_key_t *key, gl3_program_t *program )
 {
-	static const VkVertexInputBindingDescription bindings[] =
-	{
-		{ 0, sizeof( gl3_vertex_t ), VK_VERTEX_INPUT_RATE_VERTEX },
-	};
-	static const VkVertexInputAttributeDescription attributes[] =
+	static const VkVertexInputBindingDescription draw_binding = { 0, sizeof( gl3_vertex_t ), VK_VERTEX_INPUT_RATE_VERTEX };
+	static const VkVertexInputAttributeDescription draw_attributes[] =
 	{
 		{ GL3_ATTR_POSITION, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof( gl3_vertex_t, position ) },
 		{ GL3_ATTR_COLOR, 0, VK_FORMAT_B8G8R8A8_UNORM, offsetof( gl3_vertex_t, color ) },
 		{ GL3_ATTR_TEXCOORD, 0, VK_FORMAT_R32G32_SFLOAT, offsetof( gl3_vertex_t, texcoord ) },
 	};
+	static const VkVertexInputBindingDescription world_binding = { 0, sizeof( float ) * VERTEXSIZE, VK_VERTEX_INPUT_RATE_VERTEX };
+	static const VkVertexInputAttributeDescription world_attributes[] =
+	{
+		{ GL3_ATTR_POSITION, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 },
+		{ GL3_ATTR_TEXCOORD, 0, VK_FORMAT_R32G32_SFLOAT, 3 * sizeof( float ) },
+		{ GL3_ATTR_LIGHTCOORD, 0, VK_FORMAT_R32G32_SFLOAT, 5 * sizeof( float ) },
+	};
+	const qboolean world = key->layout == VK_LAYOUT_WORLD;
+	const qboolean scene = key->target == VK_TARGET_SCENE;
 	static const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS };
 	const VkPipelineShaderStageCreateInfo stages[2] =
 	{
@@ -842,10 +942,10 @@ static VkPipeline R_VKCreatePipeline( const vk_pipeline_key_t *key, gl3_program_
 	const VkPipelineVertexInputStateCreateInfo input =
 	{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-		.vertexBindingDescriptionCount = ARRAYSIZE( bindings ),
-		.pVertexBindingDescriptions = bindings,
-		.vertexAttributeDescriptionCount = ARRAYSIZE( attributes ),
-		.pVertexAttributeDescriptions = attributes,
+		.vertexBindingDescriptionCount = 1,
+		.pVertexBindingDescriptions = world ? &world_binding : &draw_binding,
+		.vertexAttributeDescriptionCount = world ? ARRAYSIZE( world_attributes ) : ARRAYSIZE( draw_attributes ),
+		.pVertexAttributeDescriptions = world ? world_attributes : draw_attributes,
 	};
 	const VkPipelineInputAssemblyStateCreateInfo assembly =
 	{
@@ -863,7 +963,8 @@ static VkPipeline R_VKCreatePipeline( const vk_pipeline_key_t *key, gl3_program_
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.cullMode = key->cull == GL3_CULL_FRONT ? VK_CULL_MODE_FRONT_BIT : key->cull == GL3_CULL_BACK ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE,
-		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE, // the swapchain's flipped viewport keeps GL's winding
+		// Vulkan's sign of a triangle's area is the opposite of GL's: the swapchain's flipped viewport makes up for it
+		.frontFace = scene ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE,
 		.depthBiasEnable = key->bias ? VK_TRUE : VK_FALSE,
 		.lineWidth = 1.0f,
 	};
@@ -888,7 +989,8 @@ static VkPipeline R_VKCreatePipeline( const vk_pipeline_key_t *key, gl3_program_
 		.srcAlphaBlendFactor = R_VKBlendFactor( key->src ),
 		.dstAlphaBlendFactor = R_VKBlendFactor( key->dst ),
 		.alphaBlendOp = VK_BLEND_OP_ADD,
-		.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+		// the scene is read back through the alpha test, and has no alpha on GL: it stays the clear's 1
+		.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | ( scene ? 0 : VK_COLOR_COMPONENT_A_BIT ),
 	};
 	const VkPipelineColorBlendStateCreateInfo blend =
 	{
@@ -916,7 +1018,7 @@ static VkPipeline R_VKCreatePipeline( const vk_pipeline_key_t *key, gl3_program_
 		.pColorBlendState = &blend,
 		.pDynamicState = &dynamic,
 		.layout = vk_pipeline_layout,
-		.renderPass = vk.pass_clear,
+		.renderPass = vk.pass_clear[key->target],
 	};
 	VkPipeline pipeline = VK_NULL_HANDLE;
 
@@ -934,6 +1036,7 @@ static VkPipeline R_VKFindPipeline( int primitive )
 	key.program = vk_program - vk_programs;
 	key.layout = vk_layout;
 	key.primitive = primitive;
+	key.target = vk.target;
 	key.blend = s->blend;
 	key.src = s->blend ? s->src : 0;
 	key.dst = s->blend ? s->dst : 0;
@@ -1008,14 +1111,13 @@ void R_GL3BackendUseDrawLayout( void )
 
 static void R_VKApplyViewport( VkCommandBuffer cmd )
 {
-	// the swapchain flips: clip y up as in GL, on an image whose first row is the top
-	const float top = (float)vk.extent.height - vk_viewport.y - vk_viewport.height;
-	const VkViewport viewport =
-	{
-		(float)vk_viewport.x, top + vk_viewport.height, (float)vk_viewport.width, -(float)vk_viewport.height,
-		vk_viewport.minz, vk_viewport.maxz,
-	};
-	const VkRect2D scissor = { { 0, 0 }, vk.extent };
+	const qboolean scene = vk.target == VK_TARGET_SCENE;
+	const VkExtent2D extent = scene ? vk.scene_extent : vk.extent;
+	const float x = (float)vk_viewport.x, w = (float)vk_viewport.width, h = (float)vk_viewport.height;
+	// the swapchain flips, as its first row is the top of the screen; a target keeps GL's first row at the bottom
+	const float y = scene ? (float)vk_viewport.y : (float)extent.height - vk_viewport.y;
+	const VkViewport viewport = { x, y, w, scene ? h : -h, vk_viewport.minz, vk_viewport.maxz };
+	const VkRect2D scissor = { { 0, 0 }, extent };
 
 	vkCmdSetViewport( cmd, 0, 1, &viewport );
 	vkCmdSetScissor( cmd, 0, 1, &scissor );
@@ -1185,6 +1287,16 @@ static qboolean R_VKPrepareDraw( int primitive, VkCommandBuffer *out )
 	return true;
 }
 
+static void R_VKBindVertices( VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize offset )
+{
+	if( buffer == vk_bound_buffer && offset == vk_bound_offset )
+		return;
+
+	vkCmdBindVertexBuffers( cmd, 0, 1, &buffer, &offset );
+	vk_bound_buffer = buffer;
+	vk_bound_offset = offset;
+}
+
 void R_GL3BackendDrawStream( int primitive, const gl3_vertex_t *vertices, int count )
 {
 	vk_frame_t *frame = &vk.frames[vk.frame];
@@ -1199,8 +1311,183 @@ void R_GL3BackendDrawStream( int primitive, const gl3_vertex_t *vertices, int co
 
 	out = R_VKRingAlloc( &frame->vertices, bytes, 16, &offset, &chunk );
 	memcpy( out, vertices, bytes );
-	vkCmdBindVertexBuffers( cmd, 0, 1, &chunk->buffer, &offset );
+	R_VKBindVertices( cmd, chunk->buffer, offset );
 	vkCmdDraw( cmd, count, 1, 0, 0 );
+}
+
+/*
+==============================================================================
+
+THE WORLD
+
+==============================================================================
+*/
+static VkBuffer       vk_world_vbo;
+static VkDeviceMemory vk_world_vbo_memory;
+static VkDeviceSize   vk_world_staging_offset;
+static vk_chunk_t    *vk_world_staging_chunk;
+static byte          *vk_world_staging;
+static VkDeviceSize   vk_world_bytes;
+
+static struct
+{
+	VkBuffer     index, vertex;
+	VkDeviceSize index_offset, vertex_offset;
+} vk_world_stream;
+
+static qboolean vk_world_dynamic;
+
+void R_GL3BackendInitWorld( void )
+{
+}
+
+static void R_VKRetireWorldBuffer( void )
+{
+	vk_frame_t *frame = &vk.frames[vk.frame];
+
+	if( !vk_world_vbo )
+		return;
+
+	if( frame->num_dead_buffers >= (int)ARRAYSIZE( frame->dead_buffers ))
+	{
+		vkDeviceWaitIdle( vk.device );
+		R_VKResetFrame( frame );
+	}
+
+	frame->dead_buffers[frame->num_dead_buffers].buffer = vk_world_vbo;
+	frame->dead_buffers[frame->num_dead_buffers].memory = vk_world_vbo_memory;
+	frame->num_dead_buffers++;
+	vk_world_vbo = VK_NULL_HANDLE;
+	vk_world_vbo_memory = VK_NULL_HANDLE;
+}
+
+void R_GL3BackendShutdownWorld( void )
+{
+	R_VKRetireWorldBuffer();
+}
+
+void R_GL3BackendWorldVerticesBegin( size_t bytes )
+{
+	VkMemoryRequirements req;
+	int type;
+
+	R_VKRetireWorldBuffer();
+
+	{
+		const VkBufferCreateInfo info =
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.size = bytes,
+			.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		};
+
+		if( !R_VKCheck( vkCreateBuffer( vk.device, &info, NULL, &vk_world_vbo ), "vkCreateBuffer" ))
+			gEngfuncs.Host_Error( "ref_vk: can't make the world's vertex buffer\n" );
+	}
+
+	vkGetBufferMemoryRequirements( vk.device, vk_world_vbo, &req );
+	type = R_VKMemoryType( req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
+
+	{
+		const VkMemoryAllocateInfo info =
+		{
+			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.allocationSize = req.size,
+			.memoryTypeIndex = (uint32_t)type,
+		};
+
+		if( type < 0
+			|| !R_VKCheck( vkAllocateMemory( vk.device, &info, NULL, &vk_world_vbo_memory ), "vkAllocateMemory" )
+			|| !R_VKCheck( vkBindBufferMemory( vk.device, vk_world_vbo, vk_world_vbo_memory, 0 ), "vkBindBufferMemory" ))
+			gEngfuncs.Host_Error( "ref_vk: can't make the world's vertex buffer\n" );
+	}
+
+	vk_world_bytes = bytes;
+	vk_world_staging = R_VKStaging( bytes, &vk_world_staging_offset, &vk_world_staging_chunk );
+}
+
+void R_GL3BackendWorldVerticesWrite( size_t offset, const void *data, size_t bytes )
+{
+	memcpy( vk_world_staging + offset, data, bytes );
+}
+
+void R_GL3BackendWorldVerticesEnd( void )
+{
+	VkCommandBuffer cmd = R_VKUploadCmd();
+	const VkBufferCopy copy = { vk_world_staging_offset, 0, vk_world_bytes };
+	const VkBufferMemoryBarrier barrier =
+	{
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.buffer = vk_world_vbo,
+		.size = VK_WHOLE_SIZE,
+	};
+
+	vkCmdCopyBuffer( cmd, vk_world_staging_chunk->buffer, vk_world_vbo, 1, &copy );
+	vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 0, NULL, 1, &barrier, 0, NULL );
+}
+
+void R_GL3BackendWorldStream( const uint32_t *indices, int numindices, const void *dynverts, size_t dynbytes )
+{
+	vk_frame_t *frame = &vk.frames[vk.frame];
+	vk_chunk_t *chunk;
+	byte *out;
+
+	memset( &vk_world_stream, 0, sizeof( vk_world_stream ));
+
+	if( numindices )
+	{
+		out = R_VKRingAlloc( &frame->vertices, numindices * sizeof( *indices ), 16, &vk_world_stream.index_offset, &chunk );
+		memcpy( out, indices, numindices * sizeof( *indices ));
+		vk_world_stream.index = chunk->buffer;
+	}
+
+	if( dynbytes )
+	{
+		out = R_VKRingAlloc( &frame->vertices, dynbytes, 16, &vk_world_stream.vertex_offset, &chunk );
+		memcpy( out, dynverts, dynbytes );
+		vk_world_stream.vertex = chunk->buffer;
+	}
+}
+
+void R_GL3BackendUseWorldLayout( qboolean dynamic )
+{
+	vk_layout = VK_LAYOUT_WORLD;
+	vk_world_dynamic = dynamic;
+}
+
+void R_GL3BackendDrawWorldIndexed( int first, int count )
+{
+	VkCommandBuffer cmd;
+
+	if( !vk_world_vbo || !vk_world_stream.index || !R_VKPrepareDraw( GL3_PRIM_TRIANGLES, &cmd ))
+		return;
+
+	R_VKBindVertices( cmd, vk_world_vbo, 0 );
+
+	if( vk_bound_index != vk_world_stream.index || vk_bound_index_offset != vk_world_stream.index_offset )
+	{
+		vkCmdBindIndexBuffer( cmd, vk_world_stream.index, vk_world_stream.index_offset, VK_INDEX_TYPE_UINT32 );
+		vk_bound_index = vk_world_stream.index;
+		vk_bound_index_offset = vk_world_stream.index_offset;
+	}
+
+	vkCmdDrawIndexed( cmd, count, 1, first, 0, 0 );
+}
+
+void R_GL3BackendDrawWorldArrays( int first, int count )
+{
+	VkCommandBuffer cmd;
+
+	if( !vk_world_stream.vertex || !R_VKPrepareDraw( GL3_PRIM_TRIANGLES, &cmd ))
+		return;
+
+	R_VKBindVertices( cmd, vk_world_stream.vertex, vk_world_stream.vertex_offset );
+	vkCmdDraw( cmd, count, 1, first, 0 );
 }
 
 /*
@@ -1226,6 +1513,13 @@ void R_VKResetFrame( vk_frame_t *frame )
 		R_VKFreeMemory( &frame->dead[i].memory );
 	}
 	frame->num_dead = 0;
+
+	for( int i = 0; i < frame->num_dead_buffers; i++ )
+	{
+		vkDestroyBuffer( vk.device, frame->dead_buffers[i].buffer, NULL );
+		vkFreeMemory( vk.device, frame->dead_buffers[i].memory, NULL );
+	}
+	frame->num_dead_buffers = 0;
 }
 
 static qboolean R_VKCreateLayouts( void )
@@ -1307,7 +1601,7 @@ qboolean R_VKInitBackend( void )
 	{
 		vk.frames[i].staging.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 		vk.frames[i].staging.chunk_size = VK_STAGING_SIZE;
-		vk.frames[i].vertices.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+		vk.frames[i].vertices.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 		vk.frames[i].vertices.chunk_size = VK_VERTICES_SIZE;
 		vk.frames[i].uniforms.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 		vk.frames[i].uniforms.chunk_size = VK_UNIFORMS_SIZE;

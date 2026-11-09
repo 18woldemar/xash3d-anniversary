@@ -2,8 +2,8 @@
 // studio shader bind the same two samplers, so this is put in front of both by R_GL3CreateSpotProgram.
 
 #ifdef FRAGMENT_SHADER
-uniform sampler2D s_cookie;
-uniform sampler2D s_shadow; // the distance along the cone, in the red channel
+SAMPLER( s_cookie, 3 )
+SAMPLER( s_shadow, 4 ) // the distance along the cone, in the red channel
 
 #define GL3_SHADOW_ATTEN 0.35 // a shadow is never black: shadowatten lifts it, as Source has it
 

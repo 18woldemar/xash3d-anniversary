@@ -8,11 +8,11 @@
 #ifdef VERTEX_SHADER
 // 0..3 the transform's rows, 4 xy the scrolling offset, 5 x time y wave height, 6 the eye plane,
 // 8..11 object to the flashlight's clip space
-uniform vec4 vsc[12];
+VS_REGISTERS( 12 )
 
-in vec4 a_position;
-in vec2 a_texcoord;
-in vec2 a_lightcoord;
+ATTR( vec4, a_position, 0 )
+ATTR( vec2, a_texcoord, 2 )
+ATTR( vec2, a_lightcoord, 3 )
 
 out vec2 v_st;
 out vec2 v_lm;
@@ -54,6 +54,7 @@ void main()
 	v_lm = a_lightcoord;
 	v_fogz = dot( vsc[6], p );
 	gl_Position = vec4( dot( vsc[0], p ), dot( vsc[1], p ), dot( vsc[2], p ), dot( vsc[3], p ));
+	VK_FIX_CLIP();
 #ifdef SPOT
 	v_spot = vec4( dot( vsc[8], p ), dot( vsc[9], p ), dot( vsc[10], p ), dot( vsc[11], p ));
 	v_wpos = p.xyz;
@@ -65,10 +66,10 @@ void main()
 // 0 colour; 1 rgb the texture term's fog, a 1 / fog end (0: no fog); 2 rgb the lightmap term's fog, a 1 when that
 // term is fogged; 3 x the lightmap factor (R_GL3LightmapScale); 4 rgb the flashlight, a its linear attenuation;
 // 5 xyz where the lamp hangs, w 1 / its range; 31 x alpha ref
-uniform vec4 psc[32];
-uniform sampler2D s_texture;
-uniform sampler2D s_lightmap;
-uniform sampler2D s_ripple;
+PS_REGISTERS( 32 )
+SAMPLER( s_texture, 0 )
+SAMPLER( s_lightmap, 1 )
+SAMPLER( s_ripple, 2 )
 
 in vec2 v_st;
 in vec2 v_lm;
