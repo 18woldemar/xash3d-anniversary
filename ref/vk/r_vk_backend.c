@@ -814,6 +814,7 @@ static gl3_program_t     *vk_program;
 static gl3_program_t      vk_no_program;
 static VkPipelineCache    vk_pipeline_cache;
 static vk_pipeline_slot_t vk_pipelines[VK_MAX_PIPELINES];
+static int                vk_num_pipelines;
 
 static gl3_states_t vk_states;
 static int          vk_layout;
@@ -1096,8 +1097,12 @@ static VkPipeline R_VKFindPipeline( int primitive )
 
 		if( !slot->pipeline )
 		{
+			const double start = gEngfuncs.pfnTime();
+
 			slot->key = key;
 			slot->pipeline = R_VKCreatePipeline( &key, vk_program );
+			vk_num_pipelines++;
+			gEngfuncs.Con_Reportf( "ref_vk: pipeline %d (%s), %.1f ms\n", vk_num_pipelines, vk_program->source->name, ( gEngfuncs.pfnTime() - start ) * 1000.0 );
 			return slot->pipeline;
 		}
 	}
