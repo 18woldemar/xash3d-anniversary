@@ -21,6 +21,8 @@ cp "$list" "$run/valve/shots.txt"
 rm -f "$log"
 # A shot set is only a baseline if it does not depend on the config the run tree carries: every cvar that
 # changes what the camera sees is named here. SHOTS_ARGS comes after them and wins.
+# the engine reads this one from its own file before any cvar on the command line
+[ ! -f "$run/valve/vfs.cfg" ] || sed -i 's/^fs_mount_hd .*/fs_mount_hd "0"/' "$run/valve/vfs.cfg"
 pinned="+gamma 2.5 +brightness 1 +gl_overbright 0 +gl_texture_nearest 0 +gl_lightmap_nearest 0 +gl_anisotropy 8"
 pinned="$pinned +gl_fog 1 +gl_vbo 0 +r_detailtextures 0 +r_lighting_modulate 0.6 +r_lighting_extended 1"
 pinned="$pinned +r_lighting_ambient 0.3 +r_dynamic 1 +r_ripple 0 +r_traceglow 0 +cl_himodels 0 +default_fov 90"

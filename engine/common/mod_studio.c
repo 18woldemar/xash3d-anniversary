@@ -910,6 +910,276 @@ static void Mod_StudioComputeBounds( void *buffer, vec3_t mins, vec3_t maxs, qbo
 }
 
 /*
+=================
+Mod_StudioFits
+
+Models come from servers too, and everything that walks one (both renderers, the bounds, the hull trace,
+the animation code) trusts its offsets, its counts and the indices it stores. Called once phdr->length is
+known to fit the file. Not covered: the run-length encoded animation values, and sequence group files.
+=================
+*/
+#define MAXSTUDIOBLENDS_LIMIT 1024 // far over any real model, and keeps blends times bones in an int
+
+static qboolean Mod_StudioRange( const studiohdr_t *phdr, int32_t offset, int32_t count, size_t size )
+{
+	return count == 0 || ( count > 0 && offset >= 0 && (int64_t)offset + count * (int64_t)size <= phdr->length );
+}
+
+static qboolean Mod_StudioBoneList( const studiohdr_t *phdr, int32_t offset, int32_t count )
+{
+	const byte *bones = (const byte *)phdr + offset;
+
+	if( !Mod_StudioRange( phdr, offset, count, sizeof( byte )))
+		return false;
+
+	for( int i = 0; i < count; i++ )
+	{
+		if( bones[i] >= phdr->numbones )
+			return false;
+	}
+
+	return true;
+}
+
+static qboolean Mod_StudioBoneWeights( const studiohdr_t *phdr, int32_t offset, int32_t count )
+{
+	const mstudioboneweight_t *weights = (const mstudioboneweight_t *)((const byte *)phdr + offset);
+
+	if( offset == 0 ) // the renderers ignore the blend info then
+		return true;
+
+	if( !Mod_StudioRange( phdr, offset, count, sizeof( mstudioboneweight_t )))
+		return false;
+
+	for( int i = 0; i < count; i++ )
+	{
+		for( int k = 0; k < MAXSTUDIOBONEWEIGHTS; k++ )
+		{
+			if( weights[i].bone[k] >= phdr->numbones )
+				return false;
+		}
+	}
+
+	return true;
+}
+
+static qboolean Mod_StudioMesh( const studiohdr_t *phdr, const mstudiomodel_t *submodel, const mstudiomesh_t *mesh )
+{
+	const byte *const end = (const byte *)phdr + phdr->length;
+	const short *cmd = (const short *)((const byte *)phdr + mesh->triindex);
+
+	if( mesh->numtris == 0 )
+		return true;
+
+	if( mesh->triindex < 0 || mesh->triindex >= phdr->length )
+		return false;
+
+	for( ;; )
+	{
+		int n;
+
+		if( (const byte *)( cmd + 1 ) > end )
+			return false;
+
+		if(( n = *cmd++ ) == 0 )
+			return true;
+
+		n = abs( n );
+		if( (const byte *)( cmd + n * 4 ) > end )
+			return false;
+
+		for( int k = 0; k < n; k++, cmd += 4 )
+		{
+			if( cmd[0] < 0 || cmd[0] >= submodel->numverts || cmd[1] < 0 || cmd[1] >= submodel->numnorms )
+				return false;
+		}
+	}
+}
+
+static qboolean Mod_StudioSubmodel( const studiohdr_t *phdr, const mstudiomodel_t *submodel )
+{
+	const mstudiomesh_t *mesh = (const mstudiomesh_t *)((const byte *)phdr + submodel->meshindex);
+	int64_t norms = 0;
+
+	// the renderers keep per-vertex arrays of these sizes
+	if( submodel->nummesh > MAXSTUDIOMESHES || submodel->numverts > MAXSTUDIOVERTS || submodel->numnorms > MAXSTUDIOVERTS )
+		return false;
+
+	if( !Mod_StudioRange( phdr, submodel->meshindex, submodel->nummesh, sizeof( mstudiomesh_t ))
+		|| !Mod_StudioRange( phdr, submodel->vertindex, submodel->numverts, sizeof( vec3_t ))
+		|| !Mod_StudioRange( phdr, submodel->normindex, submodel->numnorms, sizeof( vec3_t ))
+		|| !Mod_StudioBoneList( phdr, submodel->vertinfoindex, submodel->numverts )
+		|| !Mod_StudioBoneList( phdr, submodel->norminfoindex, submodel->numnorms ))
+		return false;
+
+	if( FBitSet( phdr->flags, STUDIO_HAS_BONEWEIGHTS )
+		&& ( !Mod_StudioBoneWeights( phdr, submodel->blendvertinfoindex, submodel->numverts )
+		|| !Mod_StudioBoneWeights( phdr, submodel->blendnorminfoindex, submodel->numnorms )))
+		return false;
+
+	for( int i = 0; i < submodel->nummesh; i++ )
+	{
+		if( mesh[i].numnorms < 0 || !Mod_StudioMesh( phdr, submodel, &mesh[i] ))
+			return false;
+
+		norms += mesh[i].numnorms;
+	}
+
+	return norms <= submodel->numnorms;
+}
+
+static qboolean Mod_StudioSequences( const studiohdr_t *phdr )
+{
+	const mstudioseqdesc_t *seq = (const mstudioseqdesc_t *)((const byte *)phdr + phdr->seqindex);
+
+	if( !Mod_StudioRange( phdr, phdr->seqindex, phdr->numseq, sizeof( mstudioseqdesc_t ))
+		|| !Mod_StudioRange( phdr, phdr->seqgroupindex, phdr->numseqgroups, sizeof( mstudioseqgroup_t )))
+		return false;
+
+	for( int i = 0; i < phdr->numseq; i++ )
+	{
+		if( seq[i].seqgroup < 0 || seq[i].seqgroup >= phdr->numseqgroups || seq[i].numblends < 0
+			|| !Mod_StudioRange( phdr, seq[i].eventindex, seq[i].numevents, sizeof( mstudioevent_t )))
+			return false;
+
+		// the animation of the other groups is in their own files
+		if( seq[i].seqgroup == 0 && ( seq[i].numblends > MAXSTUDIOBLENDS_LIMIT
+			|| !Mod_StudioRange( phdr, seq[i].animindex, seq[i].numblends * phdr->numbones, sizeof( mstudioanim_t ))))
+			return false;
+	}
+
+	return true;
+}
+
+static qboolean Mod_StudioSkeleton( const studiohdr_t *phdr )
+{
+	const mstudiobone_t *bone = (const mstudiobone_t *)((const byte *)phdr + phdr->boneindex);
+	const mstudiobonecontroller_t *controller = (const mstudiobonecontroller_t *)((const byte *)phdr + phdr->bonecontrollerindex);
+	const mstudiobbox_t *hitbox = (const mstudiobbox_t *)((const byte *)phdr + phdr->hitboxindex);
+	const mstudioattachment_t *attachment = (const mstudioattachment_t *)((const byte *)phdr + phdr->attachmentindex);
+
+	if( phdr->numbones > MAXSTUDIOBONES
+		|| !Mod_StudioRange( phdr, phdr->boneindex, phdr->numbones, sizeof( mstudiobone_t ))
+		|| !Mod_StudioRange( phdr, phdr->bonecontrollerindex, phdr->numbonecontrollers, sizeof( mstudiobonecontroller_t ))
+		|| !Mod_StudioRange( phdr, phdr->hitboxindex, phdr->numhitboxes, sizeof( mstudiobbox_t ))
+		|| !Mod_StudioRange( phdr, phdr->attachmentindex, phdr->numattachments, sizeof( mstudioattachment_t )))
+		return false;
+
+	for( int i = 0; i < phdr->numbones; i++ )
+	{
+		if( bone[i].parent < -1 || bone[i].parent >= phdr->numbones )
+			return false;
+	}
+
+	for( int i = 0; i < phdr->numbonecontrollers; i++ )
+	{
+		if( controller[i].bone < -1 || controller[i].bone >= phdr->numbones )
+			return false;
+	}
+
+	for( int i = 0; i < phdr->numhitboxes; i++ )
+	{
+		if( hitbox[i].bone < 0 || hitbox[i].bone >= phdr->numbones )
+			return false;
+	}
+
+	for( int i = 0; i < phdr->numattachments; i++ )
+	{
+		if( attachment[i].bone < 0 || attachment[i].bone >= phdr->numbones )
+			return false;
+	}
+
+	return true;
+}
+
+static qboolean Mod_StudioFits( const studiohdr_t *phdr )
+{
+	const mstudiobodyparts_t *bodypart = (const mstudiobodyparts_t *)((const byte *)phdr + phdr->bodypartindex);
+
+	if( !Mod_StudioSkeleton( phdr ) || !Mod_StudioSequences( phdr )
+		|| !Mod_StudioRange( phdr, phdr->bodypartindex, phdr->numbodyparts, sizeof( mstudiobodyparts_t )))
+		return false;
+
+	for( int i = 0; i < phdr->numbodyparts; i++ )
+	{
+		const mstudiomodel_t *submodel = (const mstudiomodel_t *)((const byte *)phdr + bodypart[i].modelindex);
+
+		if( !Mod_StudioRange( phdr, bodypart[i].modelindex, bodypart[i].nummodels, sizeof( mstudiomodel_t )))
+			return false;
+
+		for( int j = 0; j < bodypart[i].nummodels; j++ )
+		{
+			if( !Mod_StudioSubmodel( phdr, &submodel[j] ))
+				return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+=================
+Mod_StudioSkinsFit
+
+The textures of a model carry their data in its own file: a companion T.mdl goes through Mod_StudioTexSizes.
+Runs again after the merge, when the skin table has just come from the companion file.
+A model with no textures draws no skins, and a dedicated server never merges the companion.
+=================
+*/
+static qboolean Mod_StudioSkinsFit( const studiohdr_t *phdr, qboolean checkdata )
+{
+	const mstudiotexture_t *texture = (const mstudiotexture_t *)((const byte *)phdr + phdr->textureindex);
+	const short *skin = (const short *)((const byte *)phdr + phdr->skinindex);
+	const mstudiobodyparts_t *bodypart = (const mstudiobodyparts_t *)((const byte *)phdr + phdr->bodypartindex);
+	int64_t skins;
+
+	if( phdr->numtextures <= 0 )
+		return phdr->numtextures == 0;
+
+	if( phdr->numskinref < 0 || phdr->numskinfamilies < 0 )
+		return false;
+
+	skins = (int64_t)phdr->numskinref * phdr->numskinfamilies;
+
+	if( !Mod_StudioRange( phdr, phdr->textureindex, phdr->numtextures, sizeof( mstudiotexture_t ))
+		|| skins > INT32_MAX || !Mod_StudioRange( phdr, phdr->skinindex, (int32_t)skins, sizeof( short )))
+		return false;
+
+	for( int64_t i = 0; i < skins; i++ )
+	{
+		if( skin[i] < 0 || skin[i] >= phdr->numtextures )
+			return false;
+	}
+
+	for( int i = 0; checkdata && i < phdr->numtextures; i++ )
+	{
+		const int64_t pixels = (int64_t)texture[i].width * texture[i].height;
+
+		if( texture[i].width <= 0 || texture[i].height <= 0 || texture[i].index < 0
+			|| texture[i].index + pixels + 768 > phdr->length )
+			return false;
+	}
+
+	for( int i = 0; i < phdr->numbodyparts; i++ )
+	{
+		const mstudiomodel_t *submodel = (const mstudiomodel_t *)((const byte *)phdr + bodypart[i].modelindex);
+
+		for( int j = 0; j < bodypart[i].nummodels; j++ )
+		{
+			const mstudiomesh_t *mesh = (const mstudiomesh_t *)((const byte *)phdr + submodel[j].meshindex);
+
+			for( int k = 0; k < submodel[j].nummesh; k++ )
+			{
+				if( mesh[k].skinref < 0 || mesh[k].skinref >= phdr->numskinref )
+					return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+/*
 ====================
 Mod_GetStudioBounds
 ====================
@@ -918,14 +1188,19 @@ qboolean Mod_GetStudioBounds( const char *name, vec3_t mins, vec3_t maxs )
 {
 	int	result = false;
 	byte	*f;
+	fs_offset_t size;
+	const studiohdr_t *phdr;
 
 	if( !Q_strstr( name, "models" ) || !Q_strstr( name, ".mdl" ))
 		return false;
 
-	f = FS_LoadFile( name, NULL, false );
+	f = FS_LoadFile( name, &size, false );
 	if( !f ) return false;
 
-	if( *(uint *)f == IDSTUDIOHEADER )
+	phdr = (const studiohdr_t *)f;
+
+	if( (size_t)size >= sizeof( studiohdr_t ) && phdr->ident == IDSTUDIOHEADER && phdr->version == STUDIO_VERSION
+		&& phdr->length >= (int32_t)sizeof( studiohdr_t ) && phdr->length <= size && Mod_StudioFits( phdr ))
 	{
 		VectorClear( mins );
 		VectorClear( maxs );
@@ -1145,50 +1420,6 @@ MAYBE_UNUSED static qboolean Mod_StudioTexSizes( studiohdr_t *thdr, size_t texsi
 	return true;
 }
 
-static qboolean Mod_StudioRange( const studiohdr_t *phdr, int32_t offset, int32_t count, size_t size )
-{
-	return count == 0 || ( count > 0 && offset >= 0 && (int64_t)offset + count * (int64_t)size <= phdr->length );
-}
-
-/*
-=================
-Mod_StudioGeometryFits
-
-Models come from servers too, and everything that walks one (both renderers, the bounds, the hull trace)
-trusts these offsets. Only called once phdr->length is known to fit the file.
-=================
-*/
-static qboolean Mod_StudioGeometryFits( const studiohdr_t *phdr )
-{
-	const mstudiobodyparts_t *bodypart;
-
-	if( phdr->numbones > MAXSTUDIOBONES || !Mod_StudioRange( phdr, phdr->boneindex, phdr->numbones, sizeof( mstudiobone_t ))
-		|| !Mod_StudioRange( phdr, phdr->bodypartindex, phdr->numbodyparts, sizeof( mstudiobodyparts_t )))
-		return false;
-
-	bodypart = (const mstudiobodyparts_t *)((const byte *)phdr + phdr->bodypartindex);
-
-	for( int i = 0; i < phdr->numbodyparts; i++ )
-	{
-		const mstudiomodel_t *submodel = (const mstudiomodel_t *)((const byte *)phdr + bodypart[i].modelindex);
-
-		if( !Mod_StudioRange( phdr, bodypart[i].modelindex, bodypart[i].nummodels, sizeof( mstudiomodel_t )))
-			return false;
-
-		for( int j = 0; j < bodypart[i].nummodels; j++ )
-		{
-			if( !Mod_StudioRange( phdr, submodel[j].meshindex, submodel[j].nummesh, sizeof( mstudiomesh_t ))
-				|| !Mod_StudioRange( phdr, submodel[j].vertinfoindex, submodel[j].numverts, sizeof( byte ))
-				|| !Mod_StudioRange( phdr, submodel[j].vertindex, submodel[j].numverts, sizeof( vec3_t ))
-				|| !Mod_StudioRange( phdr, submodel[j].norminfoindex, submodel[j].numnorms, sizeof( byte ))
-				|| !Mod_StudioRange( phdr, submodel[j].normindex, submodel[j].numnorms, sizeof( vec3_t )))
-				return false;
-		}
-	}
-
-	return true;
-}
-
 /*
 =================
 Mod_LoadStudioModel
@@ -1209,7 +1440,7 @@ void Mod_LoadStudioModel( model_t *mod, void *buffer, size_t buffersize, qboolea
 	if( !phdr || phdr->length < (int32_t)sizeof( studiohdr_t ) || (size_t)phdr->length > buffersize ) // garbage value in length
 		return;	// bad model
 
-	if( !Mod_StudioGeometryFits( phdr ))
+	if( !Mod_StudioFits( phdr ) || !Mod_StudioSkinsFit( phdr, true ))
 	{
 		Con_Printf( S_ERROR "%s: %s points outside its file\n", __func__, mod->name );
 		return;
@@ -1246,6 +1477,13 @@ void Mod_LoadStudioModel( model_t *mod, void *buffer, size_t buffersize, qboolea
 			byte *out = (byte *)phdr + phdr->textureindex;
 			memcpy( out, in, size1 + size2 );	// copy textures + skinrefs
 			phdr->length += size1 + size2;
+
+			if( !Mod_StudioSkinsFit( phdr, false ))
+			{
+				Con_Printf( S_ERROR "%s: %s has skins outside its textures\n", __func__, mod->name );
+				Mem_Free( buffer2 );
+				return;
+			}
 		}
 		else Con_Printf( S_WARN "%s: %s missing textures file\n", __func__, mod->name );
 

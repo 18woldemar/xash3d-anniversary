@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Starts c1a0 once per kind of damage to a model the map draws, on a scratch copy of the build: none may crash the engine.
-# Usage: badmodels [model]    (default scientist.mdl from RUN_DATA)
+# Usage: badmodels [model]    (default scientist.mdl from RUN_DATA; it is a model with a T.mdl, so the skin kinds need
+# a model that holds its own textures). BADMODELS_KINDS picks the kinds.
 set -uo pipefail
 tools=$(dirname "$(readlink -f "$0")")
 top=$(readlink -f "$tools/../..")
@@ -42,16 +43,24 @@ tri = u(mesh + 4)
 	'numbodyparts': lambda: p(204, 0xffffff),
 	'bone_far': lambda: p(144, far),
 	'numbones': lambda: p(140, 0x7000),
+	'boneparent': lambda: p(u(144) + 32, 0x7000),
+	'bonebyte': lambda: b.__setitem__(u(sub + 84), 0xff),
+	'seqgroup': lambda: p(u(168) + 156, 0x7000),
+	'animindex': lambda: p(u(168) + 124, far),
+	'numevents': lambda: p(u(168) + 48, 0xffffff),
+	'skin_far': lambda: p(200, far),
+	'skinvalue': lambda: struct.pack_into('<h', b, u(200), 0x7000),
+	'texdata': lambda: p(u(184) + 76, far),
 }[case]()
 open(dst, 'wb').write(b)
 EOF
 }
 
-for kind in vert tri_end tri_far skinref mesh_far nummesh numverts vertinfo vertindex normindex model_far nummodels bodypart_far numbodyparts bone_far numbones; do
+for kind in ${BADMODELS_KINDS:-vert tri_end tri_far skinref mesh_far nummesh numverts vertinfo vertindex normindex model_far nummodels bodypart_far numbodyparts bone_far numbones boneparent bonebyte seqgroup animindex numevents skin_far skinvalue texdata}; do
 	damage "$kind"
 	RUN_DIR=$tree RUN_TIMEOUT=${BADMODELS_SECONDS:-14} "$tools/run" run -nosound +map c1a0 > /dev/null 2>&1
 	if grep -aq '^Crash' "$tree/engine.log"; then result=CRASH; crashes=$((crashes + 1)); else result=ok; fi
-	echo "$kind: $result: $(grep -aE 'points outside|ref_gl3: .*submodel|Could not load' "$tree/engine.log" | head -1 | cut -c1-100)"
+	echo "$kind: $result: $(grep -aE 'points outside|skins outside|ref_gl3: .*submodel|Could not load' "$tree/engine.log" | head -1 | cut -c1-100)"
 done
 echo "badmodels: $crashes crashes"
 [ "$crashes" -eq 0 ]
