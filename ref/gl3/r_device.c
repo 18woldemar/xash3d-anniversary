@@ -318,6 +318,7 @@ static const char gl3_glsl_prelude[] =
 	"#define VS_REGISTERS( n ) uniform vec4 vsc[n];\n"
 	"#define PS_REGISTERS( n ) uniform vec4 psc[n];\n"
 	"#define SAMPLER( name, unit ) uniform sampler2D name;\n"
+	"#define USAMPLER( name, unit ) uniform usampler2D name;\n"
 	"#define ATTR( type, name, location ) in type name;\n"
 	"#define VK_FIX_CLIP()\n";
 
@@ -891,4 +892,79 @@ void R_GL3BackendDrawWorldIndexed( int first, int count )
 void R_GL3BackendDrawWorldArrays( int first, int count )
 {
 	glDrawArrays( GL_TRIANGLES, first, count );
+}
+
+/*
+==============================================================================
+
+STUDIO MESHES
+
+==============================================================================
+*/
+struct gl3_mesh_s
+{
+	GLuint vao, vbo, ibo;
+};
+
+gl3_mesh_t *R_GL3BackendCreateMesh( poolhandle_t pool, const gl3_studiovertex_t *vertices, int numvertices, const word *indices, int numindices )
+{
+	gl3_mesh_t *mesh = (gl3_mesh_t *)Mem_Calloc( pool, sizeof( *mesh ));
+
+	glGenVertexArrays( 1, &mesh->vao );
+	glGenBuffers( 1, &mesh->vbo );
+	glGenBuffers( 1, &mesh->ibo );
+	glBindVertexArray( mesh->vao );
+	glBindBuffer( GL_ARRAY_BUFFER, mesh->vbo );
+	glBufferData( GL_ARRAY_BUFFER, numvertices * sizeof( *vertices ), vertices, GL_STATIC_DRAW );
+	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, mesh->ibo );
+	glBufferData( GL_ELEMENT_ARRAY_BUFFER, numindices * sizeof( *indices ), indices, GL_STATIC_DRAW );
+	glEnableVertexAttribArray( GL3_ATTR_POSITION );
+	glVertexAttribPointer( GL3_ATTR_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof( *vertices ), (void *)offsetof( gl3_studiovertex_t, position ));
+	glEnableVertexAttribArray( GL3_ATTR_NORMAL );
+	glVertexAttribPointer( GL3_ATTR_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof( *vertices ), (void *)offsetof( gl3_studiovertex_t, normal ));
+	glEnableVertexAttribArray( GL3_ATTR_TEXCOORD );
+	glVertexAttribPointer( GL3_ATTR_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof( *vertices ), (void *)offsetof( gl3_studiovertex_t, st ));
+	glEnableVertexAttribArray( GL3_ATTR_EXTRA );
+	glVertexAttribPointer( GL3_ATTR_EXTRA, 1, GL_FLOAT, GL_FALSE, sizeof( *vertices ), (void *)offsetof( gl3_studiovertex_t, bone ));
+	glBindVertexArray( 0 );
+	return mesh;
+}
+
+void R_GL3BackendDeleteMesh( gl3_mesh_t *mesh )
+{
+	glDeleteVertexArrays( 1, &mesh->vao );
+	glDeleteBuffers( 1, &mesh->vbo );
+	glDeleteBuffers( 1, &mesh->ibo );
+	Mem_Free( mesh );
+}
+
+void R_GL3BackendUseMesh( gl3_mesh_t *mesh )
+{
+	glBindVertexArray( mesh ? mesh->vao : 0 );
+}
+
+void R_GL3BackendDrawMesh( int first, int count )
+{
+	glDrawElements( GL_TRIANGLES, count, GL_UNSIGNED_SHORT, (void *)( first * sizeof( word )));
+}
+
+gl3_handle_t R_GL3BackendCreateGamma( int width, int height )
+{
+	GLuint texture;
+
+	glGenTextures( 1, &texture );
+	glBindTexture( GL_TEXTURE_2D, texture );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_R16UI, width, height, 0, GL_RED_INTEGER, GL_UNSIGNED_SHORT, NULL );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
+	R_GL3ForgetBindings();
+	return texture;
+}
+
+void R_GL3BackendWriteGamma( gl3_handle_t texture, const uint16_t *rows, int width, int height )
+{
+	glBindTexture( GL_TEXTURE_2D, texture );
+	glTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RED_INTEGER, GL_UNSIGNED_SHORT, rows );
+	R_GL3ForgetBindings();
 }

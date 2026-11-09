@@ -8,15 +8,15 @@
 // 9 view right, w blend; 10 1 / texture size, z how far the glow shell stands out, w 1 = local lights; 11..14 local lights: origin, R^2;
 // 15..18 their colours through the linear gamma table (0..1023); 20..211 3x4 bone matrices, three rows each;
 // 212..215 world to the flashlight's clip space
-uniform vec4 vsc[216];
+VS_REGISTERS( 216 )
 
 // rows: light gamma, linear gamma, screen gamma
-uniform usampler2D s_gamma;
+USAMPLER( s_gamma, 5 )
 
-in vec4 a_position; // bone space
-in vec3 a_normal;   // bone space
-in vec2 a_texcoord; // texels
-in float a_extra;   // index into the bones
+ATTR( vec4, a_position, 0 ) // bone space
+ATTR( vec3, a_normal, 4 )   // bone space
+ATTR( vec2, a_texcoord, 2 ) // texels
+ATTR( float, a_extra, 6 )   // index into the bones
 
 out vec4 v_color;
 out vec2 v_texcoord;
@@ -129,14 +129,16 @@ void main()
 	{
 		v_texcoord = a_texcoord * vsc[10].xy;
 	}
+
+	VK_FIX_CLIP();
 }
 #endif
 
 #ifdef FRAGMENT_SHADER
 // 1 rgb fog colour, a 1 / fog end (0: none); 2 rgb the flashlight, a its linear attenuation;
 // 3 xyz where the lamp hangs, w 1 / its range; 31 x alpha ref
-uniform vec4 psc[32];
-uniform sampler2D s_texture;
+PS_REGISTERS( 32 )
+SAMPLER( s_texture, 0 )
 
 in vec4 v_color;
 in vec2 v_texcoord;

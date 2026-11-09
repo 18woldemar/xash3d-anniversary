@@ -161,8 +161,8 @@ typedef struct
 
 typedef struct
 {
-	VkBuffer       buffer;
-	VkDeviceMemory memory;
+	VkBuffer        buffer;
+	vk_allocation_t memory;
 } vk_dead_buffer_t;
 
 // what the 3D part or the 2D part draws into
@@ -187,7 +187,7 @@ typedef struct
 
 	vk_dead_image_t  dead[VK_MAX_DESTROY];
 	int              num_dead;
-	vk_dead_buffer_t dead_buffers[16];
+	vk_dead_buffer_t dead_buffers[VK_MAX_DESTROY];
 	int              num_dead_buffers;
 } vk_frame_t;
 

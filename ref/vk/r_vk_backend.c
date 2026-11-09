@@ -46,6 +46,7 @@ typedef struct
 {
 	VkDeviceMemory memory;
 	uint32_t       type;
+	qboolean       linear;   // buffers and images share no block: no bufferImageGranularity to keep
 	VkDeviceSize   size;
 	int            num_free;
 	vk_range_t     free[VK_MAX_FREE]; // sorted by offset
@@ -114,17 +115,15 @@ static qboolean R_VKBlockTake( vk_block_t *block, const VkMemoryRequirements *re
 	return false;
 }
 
-qboolean R_VKAllocImageMemory( VkImage image, vk_allocation_t *out )
+static qboolean R_VKAllocMemory( const VkMemoryRequirements *req, qboolean linear, vk_allocation_t *out )
 {
-	VkMemoryRequirements req;
 	vk_block_t *block;
-	int type, slot = -1;
+	const int type = R_VKMemoryType( req->memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
+	int slot = -1;
 
-	vkGetImageMemoryRequirements( vk.device, image, &req );
-	type = R_VKMemoryType( req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
 	if( type < 0 )
 	{
-		gEngfuncs.Con_Printf( S_ERROR "ref_vk: no device-local memory for an image\n" );
+		gEngfuncs.Con_Printf( S_ERROR "ref_vk: no device-local memory\n" );
 		return false;
 	}
 
@@ -139,12 +138,12 @@ qboolean R_VKAllocImageMemory( VkImage image, vk_allocation_t *out )
 			continue;
 		}
 
-		if( block->type == (uint32_t)type && R_VKBlockTake( block, &req, &out->offset ))
+		if( block->type == (uint32_t)type && block->linear == linear && R_VKBlockTake( block, req, &out->offset ))
 		{
 			out->memory = block->memory;
-			out->size = req.size;
+			out->size = req->size;
 			out->block = i;
-			return R_VKCheck( vkBindImageMemory( vk.device, image, out->memory, out->offset ), "vkBindImageMemory" );
+			return true;
 		}
 	}
 
@@ -156,8 +155,9 @@ qboolean R_VKAllocImageMemory( VkImage image, vk_allocation_t *out )
 
 	{
 		block = &vk_blocks[slot];
-		block->size = Q_max( (VkDeviceSize)VK_BLOCK_SIZE, req.size );
+		block->size = Q_max( (VkDeviceSize)VK_BLOCK_SIZE, req->size );
 		block->type = type;
+		block->linear = linear;
 
 		const VkMemoryAllocateInfo info =
 		{
@@ -175,12 +175,21 @@ qboolean R_VKAllocImageMemory( VkImage image, vk_allocation_t *out )
 		block->num_free = 1;
 		block->free[0].offset = 0;
 		block->free[0].size = block->size;
-		R_VKBlockTake( block, &req, &out->offset );
+		R_VKBlockTake( block, req, &out->offset );
 		out->memory = block->memory;
-		out->size = req.size;
+		out->size = req->size;
 		out->block = slot;
-		return R_VKCheck( vkBindImageMemory( vk.device, image, out->memory, out->offset ), "vkBindImageMemory" );
+		return true;
 	}
+}
+
+qboolean R_VKAllocImageMemory( VkImage image, vk_allocation_t *out )
+{
+	VkMemoryRequirements req;
+
+	vkGetImageMemoryRequirements( vk.device, image, &req );
+	return R_VKAllocMemory( &req, false, out )
+		&& R_VKCheck( vkBindImageMemory( vk.device, image, out->memory, out->offset ), "vkBindImageMemory" );
 }
 
 void R_VKFreeMemory( vk_allocation_t *a )
@@ -764,6 +773,8 @@ enum
 {
 	VK_LAYOUT_DRAW = 0,
 	VK_LAYOUT_WORLD,
+	VK_LAYOUT_STUDIO,
+	VK_LAYOUT_COUNT
 };
 
 struct gl3_program_s
@@ -931,7 +942,25 @@ static VkPipeline R_VKCreatePipeline( const vk_pipeline_key_t *key, gl3_program_
 		{ GL3_ATTR_TEXCOORD, 0, VK_FORMAT_R32G32_SFLOAT, 3 * sizeof( float ) },
 		{ GL3_ATTR_LIGHTCOORD, 0, VK_FORMAT_R32G32_SFLOAT, 5 * sizeof( float ) },
 	};
-	const qboolean world = key->layout == VK_LAYOUT_WORLD;
+	static const VkVertexInputBindingDescription studio_binding = { 0, sizeof( gl3_studiovertex_t ), VK_VERTEX_INPUT_RATE_VERTEX };
+	static const VkVertexInputAttributeDescription studio_attributes[] =
+	{
+		{ GL3_ATTR_POSITION, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof( gl3_studiovertex_t, position ) },
+		{ GL3_ATTR_NORMAL, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof( gl3_studiovertex_t, normal ) },
+		{ GL3_ATTR_TEXCOORD, 0, VK_FORMAT_R32G32_SFLOAT, offsetof( gl3_studiovertex_t, st ) },
+		{ GL3_ATTR_EXTRA, 0, VK_FORMAT_R32_SFLOAT, offsetof( gl3_studiovertex_t, bone ) },
+	};
+	static const struct
+	{
+		const VkVertexInputBindingDescription *binding;
+		const VkVertexInputAttributeDescription *attributes;
+		uint32_t count;
+	} layouts[VK_LAYOUT_COUNT] =
+	{
+		[VK_LAYOUT_DRAW] = { &draw_binding, draw_attributes, ARRAYSIZE( draw_attributes ) },
+		[VK_LAYOUT_WORLD] = { &world_binding, world_attributes, ARRAYSIZE( world_attributes ) },
+		[VK_LAYOUT_STUDIO] = { &studio_binding, studio_attributes, ARRAYSIZE( studio_attributes ) },
+	};
 	const qboolean scene = key->target == VK_TARGET_SCENE;
 	static const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS };
 	const VkPipelineShaderStageCreateInfo stages[2] =
@@ -943,9 +972,9 @@ static VkPipeline R_VKCreatePipeline( const vk_pipeline_key_t *key, gl3_program_
 	{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 		.vertexBindingDescriptionCount = 1,
-		.pVertexBindingDescriptions = world ? &world_binding : &draw_binding,
-		.vertexAttributeDescriptionCount = world ? ARRAYSIZE( world_attributes ) : ARRAYSIZE( draw_attributes ),
-		.pVertexAttributeDescriptions = world ? world_attributes : draw_attributes,
+		.pVertexBindingDescriptions = layouts[key->layout].binding,
+		.vertexAttributeDescriptionCount = layouts[key->layout].count,
+		.pVertexAttributeDescriptions = layouts[key->layout].attributes,
 	};
 	const VkPipelineInputAssemblyStateCreateInfo assembly =
 	{
@@ -1297,6 +1326,16 @@ static void R_VKBindVertices( VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize
 	vk_bound_offset = offset;
 }
 
+static void R_VKBindIndices( VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize offset, VkIndexType type )
+{
+	if( buffer == vk_bound_index && offset == vk_bound_index_offset )
+		return;
+
+	vkCmdBindIndexBuffer( cmd, buffer, offset, type );
+	vk_bound_index = buffer;
+	vk_bound_index_offset = offset;
+}
+
 void R_GL3BackendDrawStream( int primitive, const gl3_vertex_t *vertices, int count )
 {
 	vk_frame_t *frame = &vk.frames[vk.frame];
@@ -1322,8 +1361,69 @@ THE WORLD
 
 ==============================================================================
 */
-static VkBuffer       vk_world_vbo;
-static VkDeviceMemory vk_world_vbo_memory;
+// device-local, filled once through the staging ring; freed when the frame that may read it has finished
+static void R_VKMakeStaticBuffer( VkDeviceSize bytes, VkBufferUsageFlags usage, VkBuffer *buffer, vk_allocation_t *memory )
+{
+	VkMemoryRequirements req;
+	const VkBufferCreateInfo info =
+	{
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = bytes,
+		.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
+
+	if( !R_VKCheck( vkCreateBuffer( vk.device, &info, NULL, buffer ), "vkCreateBuffer" ))
+		gEngfuncs.Host_Error( "ref_vk: can't make a %u byte buffer\n", (uint)bytes );
+
+	vkGetBufferMemoryRequirements( vk.device, *buffer, &req );
+
+	if( !R_VKAllocMemory( &req, true, memory )
+		|| !R_VKCheck( vkBindBufferMemory( vk.device, *buffer, memory->memory, memory->offset ), "vkBindBufferMemory" ))
+		gEngfuncs.Host_Error( "ref_vk: no memory for a %u byte buffer\n", (uint)bytes );
+}
+
+static void R_VKCopyToStaticBuffer( vk_chunk_t *chunk, VkDeviceSize offset, VkBuffer buffer, VkDeviceSize bytes, VkAccessFlags readers )
+{
+	VkCommandBuffer cmd = R_VKUploadCmd();
+	const VkBufferCopy copy = { offset, 0, bytes };
+	const VkBufferMemoryBarrier barrier =
+	{
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.dstAccessMask = readers,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.buffer = buffer,
+		.size = VK_WHOLE_SIZE,
+	};
+
+	vkCmdCopyBuffer( cmd, chunk->buffer, buffer, 1, &copy );
+	vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 0, NULL, 1, &barrier, 0, NULL );
+}
+
+static void R_VKRetireBuffer( VkBuffer *buffer, vk_allocation_t *memory )
+{
+	vk_frame_t *frame = &vk.frames[vk.frame];
+
+	if( !*buffer )
+		return;
+
+	if( frame->num_dead_buffers >= (int)ARRAYSIZE( frame->dead_buffers ))
+	{
+		vkDeviceWaitIdle( vk.device );
+		R_VKResetFrame( frame );
+	}
+
+	frame->dead_buffers[frame->num_dead_buffers].buffer = *buffer;
+	frame->dead_buffers[frame->num_dead_buffers].memory = *memory;
+	frame->num_dead_buffers++;
+	*buffer = VK_NULL_HANDLE;
+	memset( memory, 0, sizeof( *memory ));
+}
+
+static VkBuffer        vk_world_vbo;
+static vk_allocation_t vk_world_vbo_memory;
 static VkDeviceSize   vk_world_staging_offset;
 static vk_chunk_t    *vk_world_staging_chunk;
 static byte          *vk_world_staging;
@@ -1341,68 +1441,15 @@ void R_GL3BackendInitWorld( void )
 {
 }
 
-static void R_VKRetireWorldBuffer( void )
-{
-	vk_frame_t *frame = &vk.frames[vk.frame];
-
-	if( !vk_world_vbo )
-		return;
-
-	if( frame->num_dead_buffers >= (int)ARRAYSIZE( frame->dead_buffers ))
-	{
-		vkDeviceWaitIdle( vk.device );
-		R_VKResetFrame( frame );
-	}
-
-	frame->dead_buffers[frame->num_dead_buffers].buffer = vk_world_vbo;
-	frame->dead_buffers[frame->num_dead_buffers].memory = vk_world_vbo_memory;
-	frame->num_dead_buffers++;
-	vk_world_vbo = VK_NULL_HANDLE;
-	vk_world_vbo_memory = VK_NULL_HANDLE;
-}
-
 void R_GL3BackendShutdownWorld( void )
 {
-	R_VKRetireWorldBuffer();
+	R_VKRetireBuffer( &vk_world_vbo, &vk_world_vbo_memory );
 }
 
 void R_GL3BackendWorldVerticesBegin( size_t bytes )
 {
-	VkMemoryRequirements req;
-	int type;
-
-	R_VKRetireWorldBuffer();
-
-	{
-		const VkBufferCreateInfo info =
-		{
-			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-			.size = bytes,
-			.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		};
-
-		if( !R_VKCheck( vkCreateBuffer( vk.device, &info, NULL, &vk_world_vbo ), "vkCreateBuffer" ))
-			gEngfuncs.Host_Error( "ref_vk: can't make the world's vertex buffer\n" );
-	}
-
-	vkGetBufferMemoryRequirements( vk.device, vk_world_vbo, &req );
-	type = R_VKMemoryType( req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
-
-	{
-		const VkMemoryAllocateInfo info =
-		{
-			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-			.allocationSize = req.size,
-			.memoryTypeIndex = (uint32_t)type,
-		};
-
-		if( type < 0
-			|| !R_VKCheck( vkAllocateMemory( vk.device, &info, NULL, &vk_world_vbo_memory ), "vkAllocateMemory" )
-			|| !R_VKCheck( vkBindBufferMemory( vk.device, vk_world_vbo, vk_world_vbo_memory, 0 ), "vkBindBufferMemory" ))
-			gEngfuncs.Host_Error( "ref_vk: can't make the world's vertex buffer\n" );
-	}
-
+	R_VKRetireBuffer( &vk_world_vbo, &vk_world_vbo_memory );
+	R_VKMakeStaticBuffer( bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &vk_world_vbo, &vk_world_vbo_memory );
 	vk_world_bytes = bytes;
 	vk_world_staging = R_VKStaging( bytes, &vk_world_staging_offset, &vk_world_staging_chunk );
 }
@@ -1414,21 +1461,7 @@ void R_GL3BackendWorldVerticesWrite( size_t offset, const void *data, size_t byt
 
 void R_GL3BackendWorldVerticesEnd( void )
 {
-	VkCommandBuffer cmd = R_VKUploadCmd();
-	const VkBufferCopy copy = { vk_world_staging_offset, 0, vk_world_bytes };
-	const VkBufferMemoryBarrier barrier =
-	{
-		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-		.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.buffer = vk_world_vbo,
-		.size = VK_WHOLE_SIZE,
-	};
-
-	vkCmdCopyBuffer( cmd, vk_world_staging_chunk->buffer, vk_world_vbo, 1, &copy );
-	vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 0, NULL, 1, &barrier, 0, NULL );
+	R_VKCopyToStaticBuffer( vk_world_staging_chunk, vk_world_staging_offset, vk_world_vbo, vk_world_bytes, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT );
 }
 
 void R_GL3BackendWorldStream( const uint32_t *indices, int numindices, const void *dynverts, size_t dynbytes )
@@ -1469,13 +1502,7 @@ void R_GL3BackendDrawWorldIndexed( int first, int count )
 
 	R_VKBindVertices( cmd, vk_world_vbo, 0 );
 
-	if( vk_bound_index != vk_world_stream.index || vk_bound_index_offset != vk_world_stream.index_offset )
-	{
-		vkCmdBindIndexBuffer( cmd, vk_world_stream.index, vk_world_stream.index_offset, VK_INDEX_TYPE_UINT32 );
-		vk_bound_index = vk_world_stream.index;
-		vk_bound_index_offset = vk_world_stream.index_offset;
-	}
-
+	R_VKBindIndices( cmd, vk_world_stream.index, vk_world_stream.index_offset, VK_INDEX_TYPE_UINT32 );
 	vkCmdDrawIndexed( cmd, count, 1, first, 0, 0 );
 }
 
@@ -1488,6 +1515,97 @@ void R_GL3BackendDrawWorldArrays( int first, int count )
 
 	R_VKBindVertices( cmd, vk_world_stream.vertex, vk_world_stream.vertex_offset );
 	vkCmdDraw( cmd, count, 1, first, 0 );
+}
+
+/*
+==============================================================================
+
+STUDIO MESHES
+
+==============================================================================
+*/
+struct gl3_mesh_s
+{
+	VkBuffer        buffer; // the vertices, then the indices
+	vk_allocation_t memory;
+	VkDeviceSize    indices;
+};
+
+static gl3_mesh_t *vk_mesh;
+
+gl3_mesh_t *R_GL3BackendCreateMesh( poolhandle_t pool, const gl3_studiovertex_t *vertices, int numvertices, const word *indices, int numindices )
+{
+	gl3_mesh_t *mesh = (gl3_mesh_t *)Mem_Calloc( pool, sizeof( *mesh ));
+	const VkDeviceSize vertex_bytes = numvertices * sizeof( *vertices ), index_bytes = numindices * sizeof( *indices );
+	VkDeviceSize offset;
+	vk_chunk_t *chunk;
+	byte *out;
+
+	R_VKMakeStaticBuffer( vertex_bytes + index_bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, &mesh->buffer, &mesh->memory );
+	mesh->indices = vertex_bytes;
+
+	out = R_VKStaging( vertex_bytes + index_bytes, &offset, &chunk );
+	memcpy( out, vertices, vertex_bytes );
+	memcpy( out + vertex_bytes, indices, index_bytes );
+	R_VKCopyToStaticBuffer( chunk, offset, mesh->buffer, vertex_bytes + index_bytes, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT );
+	return mesh;
+}
+
+void R_GL3BackendDeleteMesh( gl3_mesh_t *mesh )
+{
+	R_VKRetireBuffer( &mesh->buffer, &mesh->memory );
+	Mem_Free( mesh );
+}
+
+void R_GL3BackendUseMesh( gl3_mesh_t *mesh )
+{
+	vk_layout = VK_LAYOUT_STUDIO;
+	vk_mesh = mesh;
+}
+
+void R_GL3BackendDrawMesh( int first, int count )
+{
+	VkCommandBuffer cmd;
+
+	if( !vk_mesh || !R_VKPrepareDraw( GL3_PRIM_TRIANGLES, &cmd ))
+		return;
+
+	R_VKBindVertices( cmd, vk_mesh->buffer, 0 );
+	R_VKBindIndices( cmd, vk_mesh->buffer, vk_mesh->indices, VK_INDEX_TYPE_UINT16 );
+	vkCmdDrawIndexed( cmd, count, 1, first, 0, 0 );
+}
+
+gl3_handle_t R_GL3BackendCreateGamma( int width, int height )
+{
+	const gl3_handle_t handle = R_VKNewSlot();
+	vk_image_t *image = &vk_images[handle];
+
+	R_VKMakeImage( image, VK_FORMAT_R16_UINT, width, height, 1, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT );
+	image->sampler = R_VKSampler( false, true, 0, 1 );
+	return handle;
+}
+
+void R_GL3BackendWriteGamma( gl3_handle_t texture, const uint16_t *rows, int width, int height )
+{
+	vk_image_t *image = R_VKImage( texture );
+	const VkDeviceSize bytes = (VkDeviceSize)width * height * sizeof( *rows );
+	VkBufferImageCopy copy =
+	{
+		.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+		.imageExtent = { (uint32_t)width, (uint32_t)height, 1 },
+	};
+	VkCommandBuffer cmd;
+	vk_chunk_t *chunk;
+	byte *out;
+
+	if( !image )
+		return;
+
+	out = R_VKStaging( bytes, &copy.bufferOffset, &chunk );
+	memcpy( out, rows, bytes );
+	cmd = R_VKBeginImageCopy( image, 0 );
+	vkCmdCopyBufferToImage( cmd, chunk->buffer, image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy );
+	R_VKEndImageCopy( cmd, image, 0 );
 }
 
 /*
@@ -1517,7 +1635,7 @@ void R_VKResetFrame( vk_frame_t *frame )
 	for( int i = 0; i < frame->num_dead_buffers; i++ )
 	{
 		vkDestroyBuffer( vk.device, frame->dead_buffers[i].buffer, NULL );
-		vkFreeMemory( vk.device, frame->dead_buffers[i].memory, NULL );
+		R_VKFreeMemory( &frame->dead_buffers[i].memory );
 	}
 	frame->num_dead_buffers = 0;
 }

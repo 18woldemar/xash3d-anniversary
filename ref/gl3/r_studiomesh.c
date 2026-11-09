@@ -23,7 +23,6 @@ bone per vertex and at most 64 bones per submodel, so each submodel maps its bon
 */
 
 #include "r_local.h"
-#include "r_gl.h"
 #include "studio.glsl.h"
 #include "shadow.glsl.h"
 
@@ -34,14 +33,6 @@ bone per vertex and at most 64 bones per submodel, so each submodel maps its bon
 
 typedef struct
 {
-	float position[3];
-	float normal[3];
-	float st[2];
-	float bone;
-} gl3_studiovertex_t;
-
-typedef struct
-{
 	int first, count; // indices
 } gl3_studiomeshrange_t;
 
@@ -49,7 +40,7 @@ typedef struct gl3_studiosub_s
 {
 	const studiohdr_t      *header;
 	const mstudiomodel_t   *submodel;
-	GLuint                  vao, vbo, ibo;
+	gl3_mesh_t              *mesh;
 	int                     numverts;
 	int                     nummeshes;
 	gl3_studiomeshrange_t   *meshes;
@@ -74,7 +65,7 @@ static struct
 	} casts[2][GL3_MAX_SHADOW_CASTERS];
 	int  numcasts[2];
 	int  castlist; // the list this frame fills; the shadow pass drains it before the swap
-	GLuint                       gamma;       // the three gamma tables for the vertex shader
+	gl3_handle_t                 gamma;       // the three gamma tables for the vertex shader
 	qboolean                     gamma_dirty;
 	poolhandle_t                 pool;
 	gl3_studiosub_t              *hash[GL3_STUDIO_HASH];
@@ -97,12 +88,8 @@ static void R_GL3ReleaseSub( gl3_studiosub_t *sub )
 {
 	R_GL3DrawReset();
 
-	if( sub->vao )
-	{
-		glDeleteVertexArrays( 1, &sub->vao );
-		glDeleteBuffers( 1, &sub->vbo );
-		glDeleteBuffers( 1, &sub->ibo );
-	}
+	if( sub->mesh )
+		R_GL3BackendDeleteMesh( sub->mesh );
 
 	if( sub->meshes ) Mem_Free( sub->meshes );
 	Mem_Free( sub );
@@ -277,23 +264,7 @@ static gl3_studiosub_t *R_GL3BuildSub( const studiohdr_t *header, const mstudiom
 	}
 
 	R_GL3DrawReset();
-	glGenVertexArrays( 1, &sub->vao );
-	glGenBuffers( 1, &sub->vbo );
-	glGenBuffers( 1, &sub->ibo );
-	glBindVertexArray( sub->vao );
-	glBindBuffer( GL_ARRAY_BUFFER, sub->vbo );
-	glBufferData( GL_ARRAY_BUFFER, numverts * sizeof( *verts ), verts, GL_STATIC_DRAW );
-	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, sub->ibo );
-	glBufferData( GL_ELEMENT_ARRAY_BUFFER, numindices * sizeof( *indices ), indices, GL_STATIC_DRAW );
-	glEnableVertexAttribArray( GL3_ATTR_POSITION );
-	glVertexAttribPointer( GL3_ATTR_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof( *verts ), (void *)offsetof( gl3_studiovertex_t, position ));
-	glEnableVertexAttribArray( GL3_ATTR_NORMAL );
-	glVertexAttribPointer( GL3_ATTR_NORMAL, 3, GL_FLOAT, GL_FALSE, sizeof( *verts ), (void *)offsetof( gl3_studiovertex_t, normal ));
-	glEnableVertexAttribArray( GL3_ATTR_TEXCOORD );
-	glVertexAttribPointer( GL3_ATTR_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof( *verts ), (void *)offsetof( gl3_studiovertex_t, st ));
-	glEnableVertexAttribArray( GL3_ATTR_EXTRA );
-	glVertexAttribPointer( GL3_ATTR_EXTRA, 1, GL_FLOAT, GL_FALSE, sizeof( *verts ), (void *)offsetof( gl3_studiovertex_t, bone ));
-	glBindVertexArray( 0 );
+	sub->mesh = R_GL3BackendCreateMesh( gl3_sm.pool, verts, numverts, indices, numindices );
 	sub->numverts = numverts;
 
 	Mem_Free( verts );
@@ -346,9 +317,7 @@ static void R_GL3UploadGammaTables( void )
 			rows[y][x] = R_GL3TableValue( tables[y], x );
 	}
 
-	glBindTexture( GL_TEXTURE_2D, gl3_sm.gamma );
-	glTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, 1024, GL3_GAMMA_ROWS, GL_RED_INTEGER, GL_UNSIGNED_SHORT, rows );
-	R_GL3ForgetBindings();
+	R_GL3BackendWriteGamma( gl3_sm.gamma, rows[0], 1024, GL3_GAMMA_ROWS );
 	gl3_sm.gamma_dirty = false;
 }
 
@@ -483,7 +452,7 @@ void R_GL3StudioDrawShadowCasters( void )
 		if( !sub || !sub->numverts )
 			continue;
 
-		glBindVertexArray( sub->vao );
+		R_GL3BackendUseMesh( sub->mesh );
 		R_GL3SetVSConstants( 20, gl3_sm.casts[list][i].palette, gl3_sm.casts[list][i].numbones * 3 );
 
 		for( int j = 0; j < sub->nummeshes; j++ )
@@ -492,7 +461,7 @@ void R_GL3StudioDrawShadowCasters( void )
 				continue;
 
 			R_GL3CommitConstants();
-			glDrawElements( GL_TRIANGLES, sub->meshes[j].count, GL_UNSIGNED_SHORT, (void *)( sub->meshes[j].first * sizeof( word )));
+			R_GL3BackendDrawMesh( sub->meshes[j].first, sub->meshes[j].count );
 			R_GL3CountDraw( sub->meshes[j].count );
 		}
 	}
@@ -560,7 +529,7 @@ void R_GL3StudioDrawPoints( void )
 
 	R_GL3DrawReset();
 	R_GL3UseProgram( flashlight ? gl3_sm.spot_prog : gl3_sm.prog );
-	glBindVertexArray( sub->vao );
+	R_GL3BackendUseMesh( sub->mesh );
 	R_GL3BindGamma( gl3_sm.gamma );
 
 	R_GL3ClipMatrix( gl3_ri.worldviewProjectionMatrix, rows );
@@ -664,7 +633,7 @@ void R_GL3StudioDrawPoints( void )
 
 		R_GL3BindTexture( shell ? R_GL3BoundTexture( ) : R_GL3StudioMeshTexture( ptexture, pskinref[pmesh[j].skinref] ));
 		R_GL3CommitConstants();
-		glDrawElements( GL_TRIANGLES, sub->meshes[j].count, GL_UNSIGNED_SHORT, (void *)( sub->meshes[j].first * sizeof( word )));
+		R_GL3BackendDrawMesh( sub->meshes[j].first, sub->meshes[j].count );
 		R_GL3CountDraw( sub->meshes[j].count );
 	}
 
@@ -691,14 +660,7 @@ qboolean R_GL3InitStudioMeshes( void )
 	if( !gl3_sm.prog || !gl3_sm.spot_prog || !gl3_sm.shadow_prog )
 		return false;
 
-	glGenTextures( 1, &gl3_sm.gamma );
-	glBindTexture( GL_TEXTURE_2D, gl3_sm.gamma );
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_R16UI, 1024, GL3_GAMMA_ROWS, 0, GL_RED_INTEGER, GL_UNSIGNED_SHORT, NULL );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
-	R_GL3ForgetBindings();
-
+	gl3_sm.gamma = R_GL3BackendCreateGamma( 1024, GL3_GAMMA_ROWS );
 	gl3_sm.pool = Mem_AllocPool( "ref_gl3 studio meshes" );
 	gl3_sm.gamma_dirty = true;
 	return true;
@@ -710,10 +672,10 @@ void R_GL3ShutdownStudioMeshes( void )
 
 	R_GL3StudioFreeMeshes( NULL );
 	R_GL3DrawReset();
-	glBindVertexArray( 0 );
+	R_GL3BackendUseMesh( NULL );
 
 	if( gl3_sm.gamma )
-		glDeleteTextures( 1, &gl3_sm.gamma );
+		R_GL3BackendDeleteTexture( gl3_sm.gamma );
 	if( gl3_sm.pool ) Mem_FreePool( &gl3_sm.pool );
 	memset( &gl3_sm, 0, sizeof( gl3_sm ));
 }

@@ -14,6 +14,7 @@ PROGRAMS = [
 	( 'world', '', False ),
 	( 'world', '#define WARP 1\n', False ),
 	( 'world', '#define WARP_SW 1\n', False ),
+	( 'studio', '', False ),
 ]
 
 PRELUDE = '''#version 450
@@ -21,6 +22,7 @@ PRELUDE = '''#version 450
 #define VS_REGISTERS( n ) layout( std140, set = 0, binding = 0 ) uniform gl3_vs { vec4 vsc[n]; };
 #define PS_REGISTERS( n ) layout( std140, set = 0, binding = 1 ) uniform gl3_ps { vec4 psc[n]; };
 #define SAMPLER( name, unit ) layout( set = 1, binding = unit ) uniform sampler2D name;
+#define USAMPLER( name, unit ) layout( set = 1, binding = unit ) uniform usampler2D name;
 #define ATTR( type, name, slot ) layout( location = slot ) in type name;
 #define VK_FIX_CLIP() gl_Position.z = 0.5 * ( gl_Position.z + gl_Position.w )
 '''

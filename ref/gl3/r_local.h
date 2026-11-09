@@ -84,6 +84,17 @@ typedef struct
 	float    texcoord[2];
 } gl3_vertex_t;
 
+// a studio submodel's vertex
+typedef struct
+{
+	float position[3];
+	float normal[3];
+	float st[2];
+	float bone;
+} gl3_studiovertex_t;
+
+typedef struct gl3_mesh_s gl3_mesh_t;
+
 typedef struct gl3_texture_s
 {
 	char        name[256]; // game path with extension, or an image program
@@ -569,6 +580,12 @@ void R_GL3BackendUseDrawLayout( void );
 void R_GL3BackendDrawStream( int primitive, const gl3_vertex_t *vertices, int count ); // GL3_PRIM_*
 gl3_handle_t R_GL3BackendCreateLightmap( int size );
 void R_GL3BackendWriteRows( gl3_handle_t texture, const uint32_t *luxels, int size, const gl3_rect_t *rects, int numrects, qboolean whole );
+gl3_mesh_t *R_GL3BackendCreateMesh( poolhandle_t pool, const gl3_studiovertex_t *vertices, int numvertices, const word *indices, int numindices );
+void R_GL3BackendDeleteMesh( gl3_mesh_t *mesh );
+void R_GL3BackendUseMesh( gl3_mesh_t *mesh ); // NULL: none
+void R_GL3BackendDrawMesh( int first, int count );
+gl3_handle_t R_GL3BackendCreateGamma( int width, int height ); // 16-bit integers, read with texelFetch
+void R_GL3BackendWriteGamma( gl3_handle_t texture, const uint16_t *rows, int width, int height );
 void R_GL3BackendInitWorld( void );
 void R_GL3BackendShutdownWorld( void );
 void R_GL3BackendWorldVerticesBegin( size_t bytes ); // the map's polygons
