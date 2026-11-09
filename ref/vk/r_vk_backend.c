@@ -280,7 +280,14 @@ static qboolean R_VKAddChunk( vk_ring_t *ring, VkDeviceSize size )
 	}
 
 	vkGetBufferMemoryRequirements( vk.device, chunk->buffer, &req );
-	type = R_VKMemoryType( req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );
+	type = -1;
+
+	// what the CPU reads back wants the cached kind: reading write-combined memory is about twenty times slower
+	if( FBitSet( ring->usage, VK_BUFFER_USAGE_TRANSFER_DST_BIT ))
+		type = R_VKMemoryType( req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT );
+
+	if( type < 0 )
+		type = R_VKMemoryType( req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );
 
 	{
 		const VkMemoryAllocateInfo info =
@@ -791,7 +798,7 @@ struct gl3_program_s
 
 typedef struct
 {
-	uint32_t program, layout, primitive, target;
+	uint32_t program, layout, primitive, target, scene_mode;
 	uint32_t blend, src, dst, zwrite, ztest, zfunc, cull, bias;
 } vk_pipeline_key_t;
 
@@ -962,6 +969,7 @@ static VkPipeline R_VKCreatePipeline( const vk_pipeline_key_t *key, gl3_program_
 		[VK_LAYOUT_STUDIO] = { &studio_binding, studio_attributes, ARRAYSIZE( studio_attributes ) },
 	};
 	const qboolean scene = key->target == VK_TARGET_SCENE;
+	const qboolean swap = key->target == VK_TARGET_SWAP;
 	static const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS };
 	const VkPipelineShaderStageCreateInfo stages[2] =
 	{
@@ -993,14 +1001,14 @@ static VkPipeline R_VKCreatePipeline( const vk_pipeline_key_t *key, gl3_program_
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.cullMode = key->cull == GL3_CULL_FRONT ? VK_CULL_MODE_FRONT_BIT : key->cull == GL3_CULL_BACK ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE,
 		// Vulkan's sign of a triangle's area is the opposite of GL's: the swapchain's flipped viewport makes up for it
-		.frontFace = scene ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE,
+		.frontFace = swap ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE,
 		.depthBiasEnable = key->bias ? VK_TRUE : VK_FALSE,
 		.lineWidth = 1.0f,
 	};
 	const VkPipelineMultisampleStateCreateInfo multisample =
 	{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+		.rasterizationSamples = scene ? (VkSampleCountFlagBits)vk.scene_samples : VK_SAMPLE_COUNT_1_BIT,
 	};
 	const VkPipelineDepthStencilStateCreateInfo depth =
 	{
@@ -1066,6 +1074,7 @@ static VkPipeline R_VKFindPipeline( int primitive )
 	key.layout = vk_layout;
 	key.primitive = primitive;
 	key.target = vk.target;
+	key.scene_mode = vk.target == VK_TARGET_SCENE ? vk.scene_samples * 2 + ( vk.scene_format != VK_FORMAT_B8G8R8A8_UNORM ) : 0;
 	key.blend = s->blend;
 	key.src = s->blend ? s->src : 0;
 	key.dst = s->blend ? s->dst : 0;
@@ -1140,12 +1149,12 @@ void R_GL3BackendUseDrawLayout( void )
 
 static void R_VKApplyViewport( VkCommandBuffer cmd )
 {
-	const qboolean scene = vk.target == VK_TARGET_SCENE;
-	const VkExtent2D extent = scene ? vk.scene_extent : vk.extent;
+	const qboolean flip = vk.target == VK_TARGET_SWAP;
+	const VkExtent2D extent = R_VKTargetExtent();
 	const float x = (float)vk_viewport.x, w = (float)vk_viewport.width, h = (float)vk_viewport.height;
 	// the swapchain flips, as its first row is the top of the screen; a target keeps GL's first row at the bottom
-	const float y = scene ? (float)vk_viewport.y : (float)extent.height - vk_viewport.y;
-	const VkViewport viewport = { x, y, w, scene ? h : -h, vk_viewport.minz, vk_viewport.maxz };
+	const float y = flip ? (float)extent.height - vk_viewport.y : (float)vk_viewport.y;
+	const VkViewport viewport = { x, y, w, flip ? -h : h, vk_viewport.minz, vk_viewport.maxz };
 	const VkRect2D scissor = { { 0, 0 }, extent };
 
 	vkCmdSetViewport( cmd, 0, 1, &viewport );
@@ -1194,6 +1203,86 @@ static void R_VKApplyRegisters( VkCommandBuffer cmd )
 	offsets[0] = (uint32_t)p->vs_offset;
 	offsets[1] = (uint32_t)p->ps_offset;
 	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline_layout, 0, 1, &chunk->uniforms, 2, offsets );
+}
+
+/*
+==================
+R_GL3BackendReadScreen
+
+The swapchain image, from what is drawn so far. Its first row is the top of the screen, and the bytes are in its own
+order.
+==================
+*/
+qboolean R_GL3BackendReadScreen( byte *rgba, int width, int height )
+{
+	const VkDeviceSize bytes = (VkDeviceSize)width * height * 4;
+	const qboolean bgra = vk.format == VK_FORMAT_B8G8R8A8_UNORM;
+	vk_ring_t ring = { .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT };
+	VkCommandBuffer cmd;
+
+	memset( rgba, 0, bytes );
+
+	if( !R_VKEnsurePass( ) || !vk.acquired || !R_VKAddChunk( &ring, bytes ))
+		return false;
+
+	R_VKEndPass();
+	cmd = R_VKCmd();
+
+	{
+		VkImageMemoryBarrier barrier =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = vk.images[vk.image_index],
+			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+		};
+		const VkBufferImageCopy region =
+		{
+			.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+			.imageExtent = { Q_min( (uint32_t)width, vk.extent.width ), Q_min( (uint32_t)height, vk.extent.height ), 1 },
+		};
+		const VkBufferMemoryBarrier to_host =
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.buffer = ring.chunks[0].buffer,
+			.size = VK_WHOLE_SIZE,
+		};
+
+		vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier );
+		vkCmdCopyImageToBuffer( cmd, barrier.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ring.chunks[0].buffer, 1, &region );
+		vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1, &to_host, 0, NULL );
+
+		// back to what the frame's next pass loads
+		barrier.srcAccessMask = 0;
+		barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 1, &barrier );
+	}
+
+	R_VKSubmitAndWait();
+
+	for( VkDeviceSize i = 0; i < bytes; i += 4 )
+	{
+		const byte *in = ring.chunks[0].mapped + i;
+
+		rgba[i + 0] = in[bgra ? 2 : 0];
+		rgba[i + 1] = in[1];
+		rgba[i + 2] = in[bgra ? 0 : 2];
+		rgba[i + 3] = 255;
+	}
+
+	R_VKFreeRing( &ring );
+	return false;
 }
 
 static VkDescriptorPool R_VKNewPool( vk_frame_t *frame )

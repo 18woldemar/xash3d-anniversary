@@ -20,21 +20,13 @@ read. ref_gl applies no gamma either.
 */
 
 #include "r_local.h"
-#include "r_gl.h"
-
-static void R_GL3ReadBackBuffer( byte *rgba, int width, int height )
-{
-	R_GL3DrawReset();
-	glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
-	glReadPixels( 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba );
-}
 
 qboolean R_GL3ScreenShot( const char *filename, int shot_type )
 {
 	const double start = gEngfuncs.pfnTime();
 	double read_done, process_done;
 	rgbdata_t *shot;
-	uint flags = IMAGE_FLIP_Y; // OpenGL hands the rows over bottom-up
+	uint flags = 0;
 	int width = 0, height = 0;
 	qboolean result;
 
@@ -46,7 +38,9 @@ qboolean R_GL3ScreenShot( const char *filename, int shot_type )
 	shot->size = shot->width * shot->height * 4;
 	shot->buffer = (byte *)Mem_Malloc( r_temppool, shot->size );
 
-	R_GL3ReadBackBuffer( shot->buffer, shot->width, shot->height );
+	R_GL3DrawReset();
+	if( R_GL3BackendReadScreen( shot->buffer, shot->width, shot->height ))
+		flags |= IMAGE_FLIP_Y;
 	read_done = gEngfuncs.pfnTime();
 
 	switch( shot_type )

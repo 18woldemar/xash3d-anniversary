@@ -2,10 +2,12 @@
 // target, which keeps the compare in the lighting shader simple. Defines: STUDIO, skinned by the bones.
 
 #ifdef VERTEX_SHADER
-uniform vec4 vsc[216]; // world: 8..11 object to the light's clip space; studio: 20..211 bones, 212..215 world to it
+VS_REGISTERS( 216 ) // world: 8..11 object to the light's clip space; studio: 20..211 bones, 212..215 world to it
 
-in vec4 a_position;
-in float a_extra;
+ATTR( vec4, a_position, 0 )
+#ifdef STUDIO
+ATTR( float, a_extra, 6 )
+#endif
 
 out float v_depth; // the clip w, which is the distance along the cone
 
@@ -20,11 +22,12 @@ void main()
 	gl_Position = vec4( dot( vsc[8], a_position ), dot( vsc[9], a_position ), dot( vsc[10], a_position ), dot( vsc[11], a_position ));
 #endif
 	v_depth = gl_Position.w;
+	VK_FIX_CLIP();
 }
 #endif
 
 #ifdef FRAGMENT_SHADER
-uniform vec4 psc[1]; // x: 1 / the cone's far distance
+PS_REGISTERS( 1 ) // x: 1 / the cone's far distance
 
 in float v_depth;
 

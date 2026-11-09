@@ -25,7 +25,6 @@ light. That is why no surface normal is needed here, and why the projection alon
 */
 
 #include "r_local.h"
-#include "r_gl.h"
 #include "pm_defs.h"
 
 // Half-Life 2's own numbers, from the behaviour of its flashlighteffect.cpp. The light hangs below the
@@ -56,8 +55,6 @@ static struct
 	float     params[4];  // pixel shader: rgb of the light, w its linear attenuation
 	float     params2[4]; // xyz the lamp, w 1 / far
 
-	GLuint             shadow_fbo;
-	GLuint             shadow_depth;
 	int                shadow;   // the texture slot that owns the map's texture
 	qboolean           shadowed; // this frame's map holds something
 } gl3_flashlight;
@@ -85,8 +82,8 @@ and black at the rim. A gfx/flashlight.tga of the game's own takes its place.
 */
 int R_GL3FlashlightCookie( void )
 {
-	byte *rgba;
-	GLuint glnum = 0;
+	uint32_t *texels;
+	gl3_handle_t texture;
 
 	if( gl3_flashlight.cookie )
 		return gl3_flashlight.cookie;
@@ -95,7 +92,8 @@ int R_GL3FlashlightCookie( void )
 	if( gl3_flashlight.cookie )
 		return gl3_flashlight.cookie;
 
-	rgba = (byte *)Mem_Malloc( r_temppool, GL3_COOKIE_SIZE * GL3_COOKIE_SIZE * 4 );
+	texture = R_GL3BackendCreateTexture( GL3_COOKIE_SIZE, GL3_COOKIE_SIZE, 1 );
+	texels = R_GL3BackendLockLevel( texture, 0, GL3_COOKIE_SIZE, GL3_COOKIE_SIZE );
 
 	for( int y = 0; y < GL3_COOKIE_SIZE; y++ )
 	{
@@ -107,21 +105,14 @@ int R_GL3FlashlightCookie( void )
 			const float edge = bound( 0.0f, ( 1.0f - r ) / 0.3f, 1.0f ); // the rim fades over the last 30 %
 			const float ring = 0.75f + 0.25f * ( 1.0f - bound( 0.0f, r / 0.55f, 1.0f )); // and the core is the brightest
 			const byte value = (byte)( edge * edge * ( 3.0f - 2.0f * edge ) * ring * 255.0f );
-			byte *out = rgba + ( y * GL3_COOKIE_SIZE + x ) * 4;
 
-			out[0] = out[1] = out[2] = value;
-			out[3] = 255;
+			texels[y * GL3_COOKIE_SIZE + x] = 0xff000000u | value * 0x010101u;
 		}
 	}
 
-	glGenTextures( 1, &glnum );
-	glBindTexture( GL_TEXTURE_2D, glnum );
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, GL3_COOKIE_SIZE, GL3_COOKIE_SIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
-	R_GL3ForgetBindings();
-	Mem_Free( rgba );
+	R_GL3BackendUnlockLevel();
 
-	gl3_flashlight.cookie = R_GL3WrapTexture( "*flashcookie", glnum, GL3_COOKIE_SIZE, GL3_COOKIE_SIZE, TF_CLAMP | TF_NOMIPMAP );
+	gl3_flashlight.cookie = R_GL3WrapTexture( "*flashcookie", texture, GL3_COOKIE_SIZE, GL3_COOKIE_SIZE, TF_CLAMP | TF_NOMIPMAP );
 	return gl3_flashlight.cookie;
 }
 
@@ -142,40 +133,23 @@ int R_GL3FlashlightShadowMap( void )
 
 static qboolean R_GL3FlashlightMakeShadowMap( void )
 {
-	GLuint color = 0;
+	gl3_handle_t color;
 
 	if( gl3_flashlight.shadow )
 		return true;
 
-	glGenTextures( 1, &color );
-	glBindTexture( GL_TEXTURE_2D, color );
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_R32F, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE, 0, GL_RED, GL_FLOAT, NULL );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
-	R_GL3ForgetBindings();
+	color = R_GL3BackendCreateShadowMap( GL3_SHADOW_SIZE );
+	if( color )
+		gl3_flashlight.shadow = R_GL3WrapTexture( "*flashshadow", color, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE, TF_NEAREST | TF_CLAMP | TF_NOMIPMAP );
 
-	glGenRenderbuffers( 1, &gl3_flashlight.shadow_depth );
-	glBindRenderbuffer( GL_RENDERBUFFER, gl3_flashlight.shadow_depth );
-	glRenderbufferStorageMultisample( GL_RENDERBUFFER, 0, GL_DEPTH_COMPONENT24, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE );
-	glBindRenderbuffer( GL_RENDERBUFFER, 0 );
-
-	glGenFramebuffers( 1, &gl3_flashlight.shadow_fbo );
-	glBindFramebuffer( GL_FRAMEBUFFER, gl3_flashlight.shadow_fbo );
-	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0 );
-	glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, gl3_flashlight.shadow_depth );
-
-	gl3_flashlight.shadow = R_GL3WrapTexture( "*flashshadow", color, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE,
-		TF_NEAREST | TF_CLAMP | TF_NOMIPMAP );
-
-	if( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE || !gl3_flashlight.shadow )
+	if( !gl3_flashlight.shadow )
 	{
 		gEngfuncs.Con_Printf( S_ERROR "ref_gl3: no flashlight shadow map\n" );
-		R_GL3RestoreBackBuffer();
 		R_GL3FreeFlashlight();
 		gEngfuncs.Cvar_Set( "r_flashlight_shadows", "0" );
 		return false;
 	}
 
-	R_GL3RestoreBackBuffer();
 	return true;
 }
 
@@ -185,15 +159,10 @@ void R_GL3FreeFlashlight( void )
 		R_GL3FreeTexture( gl3_flashlight.shadow );
 	if( gl3_flashlight.cookie )
 		R_GL3FreeTexture( gl3_flashlight.cookie );
-	if( gl3_flashlight.shadow_fbo )
-		glDeleteFramebuffers( 1, &gl3_flashlight.shadow_fbo );
-	if( gl3_flashlight.shadow_depth )
-		glDeleteRenderbuffers( 1, &gl3_flashlight.shadow_depth );
+	R_GL3BackendFreeShadowMap();
 
 	gl3_flashlight.shadow = 0;
 	gl3_flashlight.cookie = 0;
-	gl3_flashlight.shadow_fbo = 0;
-	gl3_flashlight.shadow_depth = 0;
 }
 
 /*
@@ -218,10 +187,7 @@ void R_GL3FlashlightShadow( int first, int last )
 	if( !R_GL3FlashlightMakeShadowMap( ))
 		return;
 
-	glBindFramebuffer( GL_FRAMEBUFFER, gl3_flashlight.shadow_fbo );
-	glViewport( 0, 0, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE );
-	glDepthRange( 0.0, 1.0 );
-	glClearColor( 1.0f, 1.0f, 1.0f, 1.0f );
+	R_GL3BackendBeginShadowPass( GL3_SHADOW_SIZE );
 	R_GL3ClearBuffers( GL3_CLEAR_COLOR | GL3_CLEAR_DEPTH );
 	R_GL3SetPSConstants( 0, range, 1 );
 
@@ -238,7 +204,7 @@ void R_GL3FlashlightShadow( int first, int last )
 	// and the models, which are the shadows a player actually sees
 	R_GL3StudioDrawShadowCasters();
 
-	R_GL3RestoreBackBuffer();
+	R_GL3BackendEndShadowPass();
 	R_GL3RestoreViewViewport(); // the view's own, which this pass replaced with the map's
 	R_GL3DrawReset();
 	gl3_flashlight.shadowed = true;

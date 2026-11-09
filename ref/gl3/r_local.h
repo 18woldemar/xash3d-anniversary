@@ -283,7 +283,6 @@ void R_GL3BindCookie( int texnum );
 void R_GL3BindShadowMap( int texnum );
 void R_GL3EnsureSceneTarget( void );
 qboolean R_GL3SceneTargetActive( void );
-void R_GL3RestoreBackBuffer( void );
 void R_GL3UnbindTexture( gl3_handle_t glnum );
 void R_GL3ForgetBindings( void );
 qboolean R_GL3TextureFilteringEnabled( int texnum );
@@ -584,6 +583,11 @@ gl3_mesh_t *R_GL3BackendCreateMesh( poolhandle_t pool, const gl3_studiovertex_t 
 void R_GL3BackendDeleteMesh( gl3_mesh_t *mesh );
 void R_GL3BackendUseMesh( gl3_mesh_t *mesh ); // NULL: none
 void R_GL3BackendDrawMesh( int first, int count );
+gl3_handle_t R_GL3BackendCreateShadowMap( int size ); // the colour texture, or 0
+void R_GL3BackendFreeShadowMap( void );
+void R_GL3BackendBeginShadowPass( int size ); // cleared to white by the clear that follows
+void R_GL3BackendEndShadowPass( void );
+qboolean R_GL3BackendReadScreen( byte *rgba, int width, int height ); // the picture so far; true: its first row is the bottom
 gl3_handle_t R_GL3BackendCreateGamma( int width, int height ); // 16-bit integers, read with texelFetch
 void R_GL3BackendWriteGamma( gl3_handle_t texture, const uint16_t *rows, int width, int height );
 void R_GL3BackendInitWorld( void );

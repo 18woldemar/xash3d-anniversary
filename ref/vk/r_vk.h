@@ -100,6 +100,7 @@ GNU General Public License for more details.
 	X( vkAllocateDescriptorSets ) \
 	X( vkUpdateDescriptorSets ) \
 	X( vkQueueWaitIdle ) \
+	X( vkCmdCopyImageToBuffer ) \
 	X( vkCmdPipelineBarrier ) \
 	X( vkCmdCopyBufferToImage ) \
 	X( vkCmdBindPipeline ) \
@@ -165,13 +166,23 @@ typedef struct
 	vk_allocation_t memory;
 } vk_dead_buffer_t;
 
-// what the 3D part or the 2D part draws into
+// what the 3D part, the 2D part or the flashlight's map draws into
 enum
 {
 	VK_TARGET_SWAP = 0,
 	VK_TARGET_SCENE,
+	VK_TARGET_SHADOW,
 	VK_TARGET_COUNT
 };
+
+#define VK_SHADOW_FORMAT VK_FORMAT_R32_SFLOAT
+
+typedef struct
+{
+	VkImage         image;
+	VkImageView     view;
+	vk_allocation_t memory;
+} vk_attachment_t;
 
 // A frame's resources are idle whenever it is the current one: R_GL3Present waits for it right after moving on to it.
 typedef struct
@@ -209,10 +220,11 @@ typedef struct
 
 	// the 3D part's picture: its memory is row for row a GL framebuffer's, which is why nothing flips here
 	VkFramebuffer   scene_framebuffer;
-	VkImage         scene_depth;
-	VkImageView     scene_depth_view;
-	vk_allocation_t scene_depth_memory;
+	vk_attachment_t scene_color; // only when multisampled: what is drawn, resolved into the scene texture
+	vk_attachment_t scene_depth;
 	VkExtent2D      scene_extent;
+	VkFormat        scene_format;
+	int             scene_samples;
 	int             scene_texture; // its slot in the core's texture table
 	qboolean        scene_pending, scene_active, scene_resolved;
 
@@ -222,13 +234,16 @@ typedef struct
 	VkImageView     views[VK_MAX_SWAP];
 	VkFramebuffer   framebuffers[VK_MAX_SWAP];
 	VkSemaphore     rendered[VK_MAX_SWAP]; // one per image: a present holds its semaphore until the image comes back
-	VkImage         depth;
-	VkImageView     depth_view;
-	vk_allocation_t depth_memory;
+	vk_attachment_t depth;
 	VkExtent2D      extent;
 	int             size_w, size_h; // the window size the swapchain was made for
 	int             vsync;
 	qboolean        rebuild;
+
+	// the flashlight's map
+	VkFramebuffer   shadow_framebuffer;
+	vk_attachment_t shadow_depth;
+	VkExtent2D      shadow_extent;
 
 	vk_frame_t frames[VK_FRAMES];
 	uint       frame;
@@ -236,6 +251,7 @@ typedef struct
 	qboolean   cmd_open, upload_open, pass_open;
 	qboolean   skip;         // no image to draw on this frame
 	qboolean   acquired;
+	qboolean   acquire_waited; // a submit in the middle of the frame has taken the semaphore
 	qboolean   started[VK_TARGET_COUNT]; // this frame's picture has had its first pass
 	int        target;
 	uint32_t   image_index;
@@ -253,6 +269,8 @@ VkCommandBuffer R_VKUploadCmd( void );
 qboolean R_VKEnsurePass( void ); // false: nothing to draw on this frame
 void R_VKEndPass( void );
 void R_VKFlushUploads( void );
+void R_VKSubmitAndWait( void ); // what is recorded so far, finished before this returns; the frame goes on after it
+VkExtent2D R_VKTargetExtent( void );
 
 // r_vk_backend.c
 qboolean R_VKInitBackend( void );
@@ -263,8 +281,5 @@ void R_VKFreeMemory( vk_allocation_t *allocation );
 void R_VKMarkStateDirty( void ); // a new command buffer has no dynamic state yet
 void R_VKMarkViewportDirty( void ); // another target
 gl3_handle_t R_VKCreateRenderTexture( VkFormat format, int width, int height, VkImageView *view );
-
-// the GL entry points, answering nothing, until each file's drawing has moved to the backend (r_vk_glstub.c)
-void R_VKInstallGLStubs( void );
 
 #endif // R_VK_H

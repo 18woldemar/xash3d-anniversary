@@ -14,7 +14,12 @@ PROGRAMS = [
 	( 'world', '', False ),
 	( 'world', '#define WARP 1\n', False ),
 	( 'world', '#define WARP_SW 1\n', False ),
+	( 'world', '', True ),
+	( 'world', '#define WARP_SW 1\n', True ),
 	( 'studio', '', False ),
+	( 'studio', '', True ),
+	( 'shadow', '', False ),
+	( 'shadow', '#define STUDIO 1\n', False ),
 ]
 
 PRELUDE = '''#version 450

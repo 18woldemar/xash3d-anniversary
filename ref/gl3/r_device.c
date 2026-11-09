@@ -276,10 +276,77 @@ qboolean R_GL3SceneTargetActive( void )
 	return gl3_scene.active;
 }
 
+static struct
+{
+	GLuint fbo, depth;
+} gl3_shadow;
+
 // after a pass of its own (the shadow map), the frame draws where it drew before
-void R_GL3RestoreBackBuffer( void )
+static void R_GL3RestoreBackBuffer( void )
 {
 	glBindFramebuffer( GL_FRAMEBUFFER, gl3_scene.active ? gl3_scene.fbo : 0 );
+}
+
+void R_GL3BackendFreeShadowMap( void )
+{
+	if( gl3_shadow.fbo )
+		glDeleteFramebuffers( 1, &gl3_shadow.fbo );
+	if( gl3_shadow.depth )
+		glDeleteRenderbuffers( 1, &gl3_shadow.depth );
+	memset( &gl3_shadow, 0, sizeof( gl3_shadow ));
+}
+
+gl3_handle_t R_GL3BackendCreateShadowMap( int size )
+{
+	GLuint color = 0;
+	GLenum status;
+
+	glGenTextures( 1, &color );
+	glBindTexture( GL_TEXTURE_2D, color );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_R32F, size, size, 0, GL_RED, GL_FLOAT, NULL );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0 );
+	R_GL3ForgetBindings();
+
+	glGenRenderbuffers( 1, &gl3_shadow.depth );
+	glBindRenderbuffer( GL_RENDERBUFFER, gl3_shadow.depth );
+	glRenderbufferStorageMultisample( GL_RENDERBUFFER, 0, GL_DEPTH_COMPONENT24, size, size );
+	glBindRenderbuffer( GL_RENDERBUFFER, 0 );
+
+	glGenFramebuffers( 1, &gl3_shadow.fbo );
+	glBindFramebuffer( GL_FRAMEBUFFER, gl3_shadow.fbo );
+	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0 );
+	glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, gl3_shadow.depth );
+	status = glCheckFramebufferStatus( GL_FRAMEBUFFER );
+	R_GL3RestoreBackBuffer();
+
+	if( status != GL_FRAMEBUFFER_COMPLETE )
+	{
+		glDeleteTextures( 1, &color );
+		R_GL3BackendFreeShadowMap();
+		return 0;
+	}
+
+	return color;
+}
+
+void R_GL3BackendBeginShadowPass( int size )
+{
+	glBindFramebuffer( GL_FRAMEBUFFER, gl3_shadow.fbo );
+	glViewport( 0, 0, size, size );
+	glDepthRange( 0.0, 1.0 );
+	glClearColor( 1.0f, 1.0f, 1.0f, 1.0f );
+}
+
+void R_GL3BackendEndShadowPass( void )
+{
+	R_GL3RestoreBackBuffer();
+}
+
+qboolean R_GL3BackendReadScreen( byte *rgba, int width, int height )
+{
+	glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+	glReadPixels( 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba );
+	return true;
 }
 
 // the scene texture's slot for the 2D part to draw first, once; 0 when this frame resolved no 3D part

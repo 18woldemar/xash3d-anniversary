@@ -286,13 +286,17 @@ static VkRenderPass R_VKMakePass( int target, qboolean clear )
 {
 	VkRenderPass pass = VK_NULL_HANDLE;
 	const qboolean scene = target == VK_TARGET_SCENE;
-	// the scene is read by the 2D part that follows it, the swapchain goes on to be presented
-	const VkImageLayout rest = scene ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	const VkAttachmentDescription attachments[2] =
+	const qboolean multisampled = scene && vk.scene_samples > 1;
+	const VkSampleCountFlagBits samples = scene ? (VkSampleCountFlagBits)vk.scene_samples : VK_SAMPLE_COUNT_1_BIT;
+	const VkFormat format = scene ? vk.scene_format : target == VK_TARGET_SHADOW ? VK_SHADOW_FORMAT : vk.format;
+	// a picture the 2D part or a shader reads next ends up readable; the swapchain goes on to be presented, and
+	// the samples of a multisampled target stay for a pass after a break
+	const VkImageLayout rest = target == VK_TARGET_SWAP || multisampled ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	const VkAttachmentDescription attachments[3] =
 	{
 		{
-			.format = scene ? VK_FORMAT_B8G8R8A8_UNORM : vk.format,
-			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.format = format,
+			.samples = samples,
 			.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
 			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
@@ -302,7 +306,7 @@ static VkRenderPass R_VKMakePass( int target, qboolean clear )
 		},
 		{
 			.format = vk.depth_format,
-			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.samples = samples,
 			.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
 			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
@@ -310,14 +314,26 @@ static VkRenderPass R_VKMakePass( int target, qboolean clear )
 			.initialLayout = clear ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 			.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 		},
+		{
+			.format = format, // the resolve, into the scene texture
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		},
 	};
 	const VkAttachmentReference color = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
 	const VkAttachmentReference depth = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+	const VkAttachmentReference resolve = { 2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
 	const VkSubpassDescription subpass =
 	{
 		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
 		.colorAttachmentCount = 1,
 		.pColorAttachments = &color,
+		.pResolveAttachments = multisampled ? &resolve : NULL,
 		.pDepthStencilAttachment = &depth,
 	};
 	// Coming in: the layout change waits for the acquire semaphore, and a pass after a break for the one before it,
@@ -346,7 +362,7 @@ static VkRenderPass R_VKMakePass( int target, qboolean clear )
 	const VkRenderPassCreateInfo info =
 	{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-		.attachmentCount = ARRAYSIZE( attachments ),
+		.attachmentCount = multisampled ? 3 : 2,
 		.pAttachments = attachments,
 		.subpassCount = 1,
 		.pSubpasses = &subpass,
@@ -374,50 +390,55 @@ static qboolean R_VKCreateRenderPasses( void )
 
 static void R_VKFreeSceneTarget( void );
 
-static void R_VKFreeDepth( void )
-{
-	if( vk.depth_view )
-		vkDestroyImageView( vk.device, vk.depth_view, NULL );
-	if( vk.depth )
-		vkDestroyImage( vk.device, vk.depth, NULL );
-	R_VKFreeMemory( &vk.depth_memory );
-	vk.depth_view = VK_NULL_HANDLE;
-	vk.depth = VK_NULL_HANDLE;
-}
-
-// the swapchain's depth: a 3D scene the menu draws into the 2D part (the player model's preview) needs one
-static qboolean R_VKCreateDepth( void )
+static qboolean R_VKMakeAttachment( vk_attachment_t *out, VkFormat format, VkExtent2D extent, int samples, VkImageUsageFlags usage, VkImageAspectFlags aspect )
 {
 	const VkImageCreateInfo image =
 	{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.imageType = VK_IMAGE_TYPE_2D,
-		.format = vk.depth_format,
-		.extent = { vk.extent.width, vk.extent.height, 1 },
+		.format = format,
+		.extent = { extent.width, extent.height, 1 },
 		.mipLevels = 1,
 		.arrayLayers = 1,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.samples = (VkSampleCountFlagBits)samples,
 		.tiling = VK_IMAGE_TILING_OPTIMAL,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.usage = usage,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
 
-	if( !R_VKCheck( vkCreateImage( vk.device, &image, NULL, &vk.depth ), "vkCreateImage" )
-		|| !R_VKAllocImageMemory( vk.depth, &vk.depth_memory ))
+	if( !R_VKCheck( vkCreateImage( vk.device, &image, NULL, &out->image ), "vkCreateImage" )
+		|| !R_VKAllocImageMemory( out->image, &out->memory ))
 		return false;
 
 	{
 		const VkImageViewCreateInfo view =
 		{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-			.image = vk.depth,
+			.image = out->image,
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = vk.depth_format,
-			.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
+			.format = format,
+			.subresourceRange = { aspect, 0, 1, 0, 1 },
 		};
 
-		return R_VKCheck( vkCreateImageView( vk.device, &view, NULL, &vk.depth_view ), "vkCreateImageView" );
+		return R_VKCheck( vkCreateImageView( vk.device, &view, NULL, &out->view ), "vkCreateImageView" );
 	}
+}
+
+static void R_VKFreeAttachment( vk_attachment_t *a )
+{
+	if( a->view )
+		vkDestroyImageView( vk.device, a->view, NULL );
+	if( a->image )
+		vkDestroyImage( vk.device, a->image, NULL );
+	R_VKFreeMemory( &a->memory );
+	a->view = VK_NULL_HANDLE;
+	a->image = VK_NULL_HANDLE;
+}
+
+// the swapchain's depth: a 3D scene the menu draws into the 2D part (the player model's preview) needs one
+static qboolean R_VKCreateDepth( void )
+{
+	return R_VKMakeAttachment( &vk.depth, vk.depth_format, vk.extent, 1, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT );
 }
 
 static void R_VKFreeSwapchainImages( void )
@@ -432,7 +453,7 @@ static void R_VKFreeSwapchainImages( void )
 		vk.views[i] = VK_NULL_HANDLE;
 	}
 	vk.num_images = 0;
-	R_VKFreeDepth();
+	R_VKFreeAttachment( &vk.depth );
 }
 
 static qboolean R_VKCreateSwapchainImages( void )
@@ -461,7 +482,7 @@ static qboolean R_VKCreateSwapchainImages( void )
 			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
 		};
 		const VkSemaphoreCreateInfo semaphore = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-		VkImageView attachments[2] = { VK_NULL_HANDLE, vk.depth_view };
+		VkImageView attachments[2] = { VK_NULL_HANDLE, vk.depth.view };
 		VkFramebufferCreateInfo framebuffer =
 		{
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -701,9 +722,10 @@ qboolean R_GL3CreateDevice( int width, int height )
 {
 	PFN_vkGetInstanceProcAddr get = (PFN_vkGetInstanceProcAddr)gEngfuncs.VK_GetInstanceProcAddr();
 
-	R_VKInstallGLStubs();
-
 	vk.gl_vsync = gEngfuncs.pfnGetCvarPointer( "gl_vsync" );
+
+	vk.scene_format = VK_FORMAT_B8G8R8A8_UNORM;
+	vk.scene_samples = 1;
 
 	if( !get || !vk.gl_vsync
 		|| !R_VKCreateInstance( get )
@@ -783,6 +805,45 @@ void R_VKFlushUploads( void )
 	vkResetCommandBuffer( frame->upload, 0 );
 }
 
+// The screenshot's copy has to have happened when the call returns, so the frame is cut here and goes on in a new
+// command buffer. The image keeps its layout between the two, and only the first submit may wait for it to be acquired.
+void R_VKSubmitAndWait( void )
+{
+	vk_frame_t *frame = &vk.frames[vk.frame];
+	const VkPipelineStageFlags wait = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	VkCommandBuffer buffers[2];
+	VkSubmitInfo submit =
+	{
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pCommandBuffers = buffers,
+		.pWaitDstStageMask = &wait,
+	};
+
+	if( vk.upload_open )
+	{
+		vkEndCommandBuffer( frame->upload );
+		buffers[submit.commandBufferCount++] = frame->upload;
+	}
+	if( vk.cmd_open )
+	{
+		vkEndCommandBuffer( frame->cmd );
+		buffers[submit.commandBufferCount++] = frame->cmd;
+	}
+
+	if( vk.acquired && !vk.acquire_waited )
+	{
+		submit.waitSemaphoreCount = 1;
+		submit.pWaitSemaphores = &frame->acquired;
+		vk.acquire_waited = true;
+	}
+
+	vkQueueSubmit( vk.queue, 1, &submit, VK_NULL_HANDLE );
+	vkQueueWaitIdle( vk.queue );
+	vkResetCommandBuffer( frame->upload, 0 );
+	vkResetCommandBuffer( frame->cmd, 0 );
+	vk.upload_open = vk.cmd_open = false;
+}
+
 static qboolean R_VKNeedsRebuild( void )
 {
 	return vk.rebuild || !vk.swapchain || vk.size_w != gpGlobals->width || vk.size_h != gpGlobals->height
@@ -815,6 +876,11 @@ static qboolean R_VKAcquire( void )
 	return true;
 }
 
+VkExtent2D R_VKTargetExtent( void )
+{
+	return vk.target == VK_TARGET_SWAP ? vk.extent : vk.target == VK_TARGET_SCENE ? vk.scene_extent : vk.shadow_extent;
+}
+
 qboolean R_VKEnsurePass( void )
 {
 	const int target = vk.target;
@@ -835,18 +901,19 @@ qboolean R_VKEnsurePass( void )
 	}
 
 	{
-		const qboolean scene = target == VK_TARGET_SCENE;
+		const float c = target == VK_TARGET_SHADOW ? 1.0f : 0.0f; // a target's own clear: the far end of the map, or black
+		const qboolean swap = target == VK_TARGET_SWAP;
 		const VkClearValue clear[2] =
 		{
-			{ .color = { .float32 = { scene ? 0.0f : vk.clear[0], scene ? 0.0f : vk.clear[1], scene ? 0.0f : vk.clear[2], 1.0f }}},
+			{ .color = { .float32 = { swap ? vk.clear[0] : c, swap ? vk.clear[1] : c, swap ? vk.clear[2] : c, 1.0f }}},
 			{ .depthStencil = { 1.0f, 0 }},
 		};
 		const VkRenderPassBeginInfo pass =
 		{
 			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 			.renderPass = vk.started[target] ? vk.pass_load[target] : vk.pass_clear[target],
-			.framebuffer = scene ? vk.scene_framebuffer : vk.framebuffers[vk.image_index],
-			.renderArea = { { 0, 0 }, scene ? vk.scene_extent : vk.extent },
+			.framebuffer = swap ? vk.framebuffers[vk.image_index] : target == VK_TARGET_SCENE ? vk.scene_framebuffer : vk.shadow_framebuffer,
+			.renderArea = { { 0, 0 }, R_VKTargetExtent( ) },
 			.clearValueCount = ARRAYSIZE( clear ),
 			.pClearValues = clear,
 		};
@@ -890,9 +957,9 @@ void R_GL3BackendClearBuffers( uint mask )
 	{
 		attachments[count].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		attachments[count].colorAttachment = 0;
-		attachments[count].clearValue.color.float32[0] = vk.clear[0];
-		attachments[count].clearValue.color.float32[1] = vk.clear[1];
-		attachments[count].clearValue.color.float32[2] = vk.clear[2];
+		attachments[count].clearValue.color.float32[0] = vk.target == VK_TARGET_SHADOW ? 1.0f : vk.clear[0];
+		attachments[count].clearValue.color.float32[1] = vk.target == VK_TARGET_SHADOW ? 1.0f : vk.clear[1];
+		attachments[count].clearValue.color.float32[2] = vk.target == VK_TARGET_SHADOW ? 1.0f : vk.clear[2];
 		attachments[count].clearValue.color.float32[3] = 1.0f;
 		count++;
 	}
@@ -908,7 +975,7 @@ void R_GL3BackendClearBuffers( uint mask )
 
 	if( count )
 	{
-		const VkClearRect rect = { { { 0, 0 }, vk.target == VK_TARGET_SCENE ? vk.scene_extent : vk.extent }, 0, 1 };
+		const VkClearRect rect = { { { 0, 0 }, R_VKTargetExtent( ) }, 0, 1 };
 
 		vkCmdClearAttachments( R_VKCmd( ), count, attachments, 1, &rect );
 	}
@@ -971,8 +1038,11 @@ void R_GL3Present( void )
 
 		if( vk.acquired )
 		{
-			submit.waitSemaphoreCount = 1;
-			submit.pWaitSemaphores = &frame->acquired;
+			if( !vk.acquire_waited )
+			{
+				submit.waitSemaphoreCount = 1;
+				submit.pWaitSemaphores = &frame->acquired;
+			}
 			submit.signalSemaphoreCount = 1;
 			submit.pSignalSemaphores = &vk.rendered[vk.image_index];
 		}
@@ -1001,7 +1071,7 @@ void R_GL3Present( void )
 	}
 
 	vk.cmd_open = vk.upload_open = false;
-	vk.acquired = vk.skip = false;
+	vk.acquired = vk.acquire_waited = vk.skip = false;
 	memset( vk.started, 0, sizeof( vk.started ));
 	vk.serial++;
 
@@ -1028,21 +1098,55 @@ static void R_VKFreeSceneTarget( void )
 {
 	if( vk.scene_framebuffer )
 		vkDestroyFramebuffer( vk.device, vk.scene_framebuffer, NULL );
-	if( vk.scene_depth_view )
-		vkDestroyImageView( vk.device, vk.scene_depth_view, NULL );
-	if( vk.scene_depth )
-		vkDestroyImage( vk.device, vk.scene_depth, NULL );
-	R_VKFreeMemory( &vk.scene_depth_memory );
 	vk.scene_framebuffer = VK_NULL_HANDLE;
-	vk.scene_depth_view = VK_NULL_HANDLE;
-	vk.scene_depth = VK_NULL_HANDLE;
+	R_VKFreeAttachment( &vk.scene_color );
+	R_VKFreeAttachment( &vk.scene_depth );
 }
 
-// ponytail: one sample and 8 bits for now; multisampling and the 16 bit target come with the frame stage
+// the most samples the device can draw at, of what was asked for
+static int R_VKSupportedSamples( int samples )
+{
+	const VkSampleCountFlags supported = vk.limits.framebufferColorSampleCounts & vk.limits.framebufferDepthSampleCounts;
+
+	while( samples > 1 && !FBitSet( supported, samples ))
+		samples /= 2;
+
+	return samples;
+}
+
+// A pass is made for a format and a sample count, so the scene's two are remade with the target. Pipelines made for
+// them stay in the cache, keyed by the scene's mode, and are good again when the mode comes back.
+static qboolean R_VKRemakeScenePasses( void )
+{
+	for( int i = 0; i < 2; i++ )
+	{
+		VkRenderPass *pass = i ? &vk.pass_load[VK_TARGET_SCENE] : &vk.pass_clear[VK_TARGET_SCENE];
+
+		if( *pass )
+			vkDestroyRenderPass( vk.device, *pass, NULL );
+
+		*pass = R_VKMakePass( VK_TARGET_SCENE, i == 0 );
+		if( !*pass )
+			return false;
+	}
+
+	return true;
+}
+
+/*
+==================
+R_GL3SetMSAA
+
+Every view goes through the target here, one sample or several: see above. The software style's target is 16 bit and
+has one. A count the renderer has no use for answers false and leaves the one-sample target.
+==================
+*/
 qboolean R_GL3SetMSAA( int samples )
 {
-	const int width = gpGlobals->width, height = gpGlobals->height;
-	VkImageView color_view;
+	const VkExtent2D extent = { (uint32_t)gpGlobals->width, (uint32_t)gpGlobals->height };
+	const qboolean soft = R_GL3Style( ) == GL3_STYLE_SOFTWARE;
+	const qboolean known = samples == 0 || samples == 2 || samples == 4 || samples == 8;
+	VkImageView resolve_view;
 	gl3_handle_t color;
 
 	vkDeviceWaitIdle( vk.device );
@@ -1053,52 +1157,32 @@ qboolean R_GL3SetMSAA( int samples )
 	vk.scene_pending = vk.scene_active = vk.scene_resolved = false;
 	R_VKFreeSceneTarget();
 
-	color = R_VKCreateRenderTexture( VK_FORMAT_B8G8R8A8_UNORM, width, height, &color_view );
+	// the span renderer had no multisampling, and its output was 16 bit
+	vk.scene_format = soft ? VK_FORMAT_R5G6B5_UNORM_PACK16 : VK_FORMAT_B8G8R8A8_UNORM;
+	vk.scene_samples = soft || samples < 2 || !known ? 1 : R_VKSupportedSamples( samples );
+
+	if( !R_VKRemakeScenePasses( ))
+		return false;
+
+	color = R_VKCreateRenderTexture( vk.scene_format, extent.width, extent.height, &resolve_view );
+
+	if( !R_VKMakeAttachment( &vk.scene_depth, vk.depth_format, extent, vk.scene_samples, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT ))
+		return false;
+
+	if( vk.scene_samples > 1 && !R_VKMakeAttachment( &vk.scene_color, vk.scene_format, extent, vk.scene_samples, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT ))
+		return false;
 
 	{
-		const VkImageCreateInfo image =
-		{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-			.imageType = VK_IMAGE_TYPE_2D,
-			.format = vk.depth_format,
-			.extent = { (uint32_t)width, (uint32_t)height, 1 },
-			.mipLevels = 1,
-			.arrayLayers = 1,
-			.samples = VK_SAMPLE_COUNT_1_BIT,
-			.tiling = VK_IMAGE_TILING_OPTIMAL,
-			.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		};
-
-		if( !R_VKCheck( vkCreateImage( vk.device, &image, NULL, &vk.scene_depth ), "vkCreateImage" )
-			|| !R_VKAllocImageMemory( vk.scene_depth, &vk.scene_depth_memory ))
-			return false;
-	}
-
-	{
-		const VkImageViewCreateInfo view =
-		{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-			.image = vk.scene_depth,
-			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = vk.depth_format,
-			.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
-		};
-
-		if( !R_VKCheck( vkCreateImageView( vk.device, &view, NULL, &vk.scene_depth_view ), "vkCreateImageView" ))
-			return false;
-	}
-
-	{
-		const VkImageView attachments[2] = { color_view, vk.scene_depth_view };
+		const qboolean multisampled = vk.scene_samples > 1;
+		const VkImageView attachments[3] = { multisampled ? vk.scene_color.view : resolve_view, vk.scene_depth.view, resolve_view };
 		const VkFramebufferCreateInfo framebuffer =
 		{
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 			.renderPass = vk.pass_clear[VK_TARGET_SCENE],
-			.attachmentCount = ARRAYSIZE( attachments ),
+			.attachmentCount = multisampled ? 3 : 2,
 			.pAttachments = attachments,
-			.width = (uint32_t)width,
-			.height = (uint32_t)height,
+			.width = extent.width,
+			.height = extent.height,
 			.layers = 1,
 		};
 
@@ -1106,10 +1190,13 @@ qboolean R_GL3SetMSAA( int samples )
 			return false;
 	}
 
-	vk.scene_extent.width = width;
-	vk.scene_extent.height = height;
-	vk.scene_texture = R_GL3WrapTexture( "*scene", color, width, height, TF_NEAREST | TF_CLAMP | TF_NOMIPMAP );
-	return true;
+	vk.scene_extent = extent;
+	vk.scene_texture = R_GL3WrapTexture( "*scene", color, extent.width, extent.height, TF_NEAREST | TF_CLAMP | TF_NOMIPMAP );
+
+	if( soft )
+		gEngfuncs.Con_Printf( "ref_vk: the software style's 16 bit scene target, %ux%u\n", extent.width, extent.height );
+	else gEngfuncs.Con_Printf( "ref_vk: %dx multisampled scene target, %ux%u\n", vk.scene_samples, extent.width, extent.height );
+	return known;
 }
 
 void R_GL3BeginSceneTarget( void )
@@ -1135,6 +1222,13 @@ void R_GL3EndSceneTarget( void )
 {
 	vk.scene_pending = false;
 
+	// an error in the middle of the shadow map's pass
+	if( vk.target == VK_TARGET_SHADOW )
+	{
+		R_VKEndPass();
+		vk.target = VK_TARGET_SWAP;
+	}
+
 	if( !vk.scene_active )
 		return;
 
@@ -1151,9 +1245,66 @@ qboolean R_GL3SceneTargetActive( void )
 	return vk.scene_active;
 }
 
-// the shadow map's pass comes with the frame stage
-void R_GL3RestoreBackBuffer( void )
+/*
+==============================================================================
+
+THE FLASHLIGHT'S MAP
+
+==============================================================================
+*/
+void R_GL3BackendFreeShadowMap( void )
 {
+	vkDeviceWaitIdle( vk.device );
+
+	if( vk.shadow_framebuffer )
+		vkDestroyFramebuffer( vk.device, vk.shadow_framebuffer, NULL );
+	vk.shadow_framebuffer = VK_NULL_HANDLE;
+	R_VKFreeAttachment( &vk.shadow_depth );
+}
+
+gl3_handle_t R_GL3BackendCreateShadowMap( int size )
+{
+	const VkExtent2D extent = { (uint32_t)size, (uint32_t)size };
+	VkImageView view;
+	const gl3_handle_t color = R_VKCreateRenderTexture( VK_SHADOW_FORMAT, size, size, &view );
+
+	if( !R_VKMakeAttachment( &vk.shadow_depth, vk.depth_format, extent, 1, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT ))
+		return 0;
+
+	{
+		const VkImageView attachments[2] = { view, vk.shadow_depth.view };
+		const VkFramebufferCreateInfo framebuffer =
+		{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = vk.pass_clear[VK_TARGET_SHADOW],
+			.attachmentCount = ARRAYSIZE( attachments ),
+			.pAttachments = attachments,
+			.width = extent.width,
+			.height = extent.height,
+			.layers = 1,
+		};
+
+		if( !R_VKCheck( vkCreateFramebuffer( vk.device, &framebuffer, NULL, &vk.shadow_framebuffer ), "vkCreateFramebuffer" ))
+			return 0;
+	}
+
+	vk.shadow_extent = extent;
+	return color;
+}
+
+void R_GL3BackendBeginShadowPass( int size )
+{
+	R_VKEndPass();
+	vk.target = VK_TARGET_SHADOW;
+	R_GL3BackendViewport( 0, 0, size, size );
+	R_GL3BackendDepthRange( 0.0f, 1.0f );
+}
+
+void R_GL3BackendEndShadowPass( void )
+{
+	R_VKEnsurePass();
+	R_VKEndPass();
+	vk.target = vk.scene_active ? VK_TARGET_SCENE : VK_TARGET_SWAP;
 }
 
 int R_GL3TakeSceneTarget( void )
