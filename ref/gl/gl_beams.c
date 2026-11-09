@@ -825,7 +825,8 @@ static qboolean R_BeamComputePoint( int beamEnt, vec3_t pt )
 	}
 
 	// get attachment
-	if( attach > 0 )
+	// the attachment number comes from the server, and it has four bits where an entity has four attachments
+	if( attach > 0 && attach <= (int)ARRAYSIZE( ent->attachment ))
 		VectorCopy( ent->attachment[attach - 1], pt );
 	else if( ent->index == ( gp_cl->playernum + 1 ))
 		VectorCopy( gp_cl->simorg, pt );

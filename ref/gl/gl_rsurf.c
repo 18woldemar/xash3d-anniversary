@@ -362,6 +362,10 @@ void GL_SubdivideSurface( model_t *loadmodel, msurface_t *fa )
 {
 	vec3_t	verts[SUBDIVIDE_SIZE];
 
+	// the count comes from the map file, and the check in SubdividePolygon_r would come too late
+	if( fa->numedges > SUBDIVIDE_SIZE - 4 )
+		gEngfuncs.Host_Error( "%s: too many vertexes on face ( %i )\n", __func__, fa->numedges );
+
 	// convert edges back to a normal polygon
 	for( int i = 0; i < fa->numedges; i++ )
 		R_GetEdgePosition( loadmodel, fa, i, verts[i] );

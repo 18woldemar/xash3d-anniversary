@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Starts c1a0 once per kind of damage to a model the map draws, on a scratch copy of the build: none may crash the engine.
 # Usage: badmodels [model]    (default scientist.mdl from RUN_DATA; it is a model with a T.mdl, so the skin kinds need
-# a model that holds its own textures). BADMODELS_KINDS picks the kinds.
+# a model that holds its own textures). BADMODELS_KINDS picks the kinds, BADMODELS_PREFIX another build.
 set -uo pipefail
 tools=$(dirname "$(readlink -f "$0")")
 top=$(readlink -f "$tools/../..")
@@ -9,7 +9,7 @@ data=${RUN_DATA:-$HOME/src/xbox-dev/assets/HalfLife-Steam}
 model=${1:-$data/valve/models/scientist.mdl}
 tree=$(mktemp -d /tmp/badmodels.XXXXXX)
 trap 'rm -rf "$tree"' EXIT
-cp -a "$top/build/prefix/." "$tree/"
+cp -a "${BADMODELS_PREFIX:-$top/build/prefix}/." "$tree/"
 mkdir -p "$tree/valve/models"
 crashes=0
 
