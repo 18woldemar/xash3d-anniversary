@@ -399,6 +399,7 @@ static const ref_api_t gEngfuncs =
 
 	CL_ExtraUpdate,
 	Host_Error,
+	Sys_Error,
 	COM_SetRandomSeed,
 	COM_RandomFloat,
 	COM_RandomLong,

@@ -445,6 +445,7 @@ typedef struct ref_api_s
 	// utils
 	void  (*CL_ExtraUpdate)( void );
 	void  (*Host_Error)( const char *fmt, ... ) FORMAT_CHECK( 1 );
+	void  (*Sys_Error)( const char *fmt, ... ) FORMAT_CHECK( 1 );
 	void  (*COM_SetRandomSeed)( int lSeed );
 	float (*COM_RandomFloat)( float rmin, float rmax );
 	int   (*COM_RandomLong)( int rmin, int rmax );

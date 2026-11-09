@@ -462,6 +462,18 @@ static VkSampler R_VKSampler( qboolean filtered, qboolean clamp, int mipcap, int
 	return *slot;
 }
 
+static void R_VKFreeDead( vk_frame_t *frame );
+
+// A list of what is waiting to go is full, in the middle of a frame: what is recorded so far runs to the end, and only
+// then can the objects it used go. The rings and the descriptor sets stay, the frame goes on with them.
+static void R_VKDrainDead( vk_frame_t *frame )
+{
+	R_VKEndPass();
+	R_VKSubmitAndWait();
+	vkDeviceWaitIdle( vk.device );
+	R_VKFreeDead( frame );
+}
+
 static gl3_handle_t R_VKNewSlot( void )
 {
 	for( int i = 1; i < vk_num_images; i++ )
@@ -583,10 +595,7 @@ void R_GL3BackendDeleteTexture( gl3_handle_t texture )
 	R_GL3UnbindTexture( texture );
 
 	if( frame->num_dead >= VK_MAX_DESTROY )
-	{
-		vkDeviceWaitIdle( vk.device );
-		R_VKResetFrame( frame );
-	}
+		R_VKDrainDead( frame );
 
 	frame->dead[frame->num_dead].image = image->image;
 	frame->dead[frame->num_dead].view = image->view;
@@ -1233,6 +1242,7 @@ qboolean R_GL3BackendReadScreen( byte *rgba, int width, int height )
 	if( !vk.swap_readable || !R_VKEnsurePass( ) || !vk.acquired || !R_VKAddChunk( &ring, bytes ))
 		return false;
 
+	memset( ring.chunks[0].mapped, 0, bytes );
 	R_VKEndPass();
 	cmd = R_VKCmd();
 
@@ -1249,8 +1259,11 @@ qboolean R_GL3BackendReadScreen( byte *rgba, int width, int height )
 			.image = vk.images[vk.image_index],
 			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
 		};
+		// a window smaller than the picture leaves the rest black, in rows of the picture's own width
 		const VkBufferImageCopy region =
 		{
+			.bufferRowLength = (uint32_t)width,
+			.bufferImageHeight = (uint32_t)height,
 			.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
 			.imageExtent = { Q_min( (uint32_t)width, vk.extent.width ), Q_min( (uint32_t)height, vk.extent.height ), 1 },
 		};
@@ -1402,7 +1415,9 @@ static qboolean R_VKPrepareDraw( int primitive, VkCommandBuffer *out )
 
 	if( vk_states.depthbias != vk_bias_applied[0] || vk_states.slopebias != vk_bias_applied[1] )
 	{
-		vkCmdSetDepthBias( cmd, vk_states.depthbias * 16777216.0f, 0.0f, vk_states.slopebias );
+		// the core's bias is a fraction of the depth range. A float's unit depends on the depth: 2^-25 for 0.5..1, where
+		// nearly everything in a view lies
+		vkCmdSetDepthBias( cmd, vk_states.depthbias * ( vk.depth_format == VK_FORMAT_D32_SFLOAT ? 33554432.0f : 16777216.0f ), 0.0f, vk_states.slopebias );
 		vk_bias_applied[0] = vk_states.depthbias;
 		vk_bias_applied[1] = vk_states.slopebias;
 	}
@@ -1507,10 +1522,7 @@ static void R_VKRetireBuffer( VkBuffer *buffer, vk_allocation_t *memory )
 		return;
 
 	if( frame->num_dead_buffers >= (int)ARRAYSIZE( frame->dead_buffers ))
-	{
-		vkDeviceWaitIdle( vk.device );
-		R_VKResetFrame( frame );
-	}
+		R_VKDrainDead( frame );
 
 	frame->dead_buffers[frame->num_dead_buffers].buffer = *buffer;
 	frame->dead_buffers[frame->num_dead_buffers].memory = *memory;
@@ -1721,6 +1733,11 @@ void R_VKResetFrame( vk_frame_t *frame )
 		vkResetDescriptorPool( vk.device, frame->pools[i], 0 );
 	frame->current_pool = 0;
 
+	R_VKFreeDead( frame );
+}
+
+static void R_VKFreeDead( vk_frame_t *frame )
+{
 	for( int i = 0; i < frame->num_dead; i++ )
 	{
 		vkDestroyImageView( vk.device, frame->dead[i].view, NULL );

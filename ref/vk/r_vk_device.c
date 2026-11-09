@@ -748,6 +748,13 @@ qboolean R_GL3CreateDevice( int width, int height )
 	return true;
 }
 
+// a failure here leaves work the GPU will never finish, and frames waiting for it: no way back to the main loop
+static void R_VKFatal( VkResult result, const char *what )
+{
+	if( result != VK_SUCCESS )
+		gEngfuncs.Sys_Error( "ref_vk: %s failed: %d\n", what, (int)result );
+}
+
 static void R_VKBeginCommands( VkCommandBuffer cmd )
 {
 	const VkCommandBufferBeginInfo begin =
@@ -802,8 +809,8 @@ void R_VKFlushUploads( void )
 
 	vkEndCommandBuffer( frame->upload );
 	vk.upload_open = false;
-	vkQueueSubmit( vk.queue, 1, &submit, VK_NULL_HANDLE );
-	vkQueueWaitIdle( vk.queue );
+	R_VKFatal( vkQueueSubmit( vk.queue, 1, &submit, VK_NULL_HANDLE ), "vkQueueSubmit" );
+	R_VKFatal( vkQueueWaitIdle( vk.queue ), "vkQueueWaitIdle" );
 	vkResetCommandBuffer( frame->upload, 0 );
 }
 
@@ -820,6 +827,9 @@ void R_VKSubmitAndWait( void )
 		.pCommandBuffers = buffers,
 		.pWaitDstStageMask = &wait,
 	};
+
+	if( !vk.upload_open && !vk.cmd_open )
+		return;
 
 	if( vk.upload_open )
 	{
@@ -839,8 +849,8 @@ void R_VKSubmitAndWait( void )
 		vk.acquire_waited = true;
 	}
 
-	vkQueueSubmit( vk.queue, 1, &submit, VK_NULL_HANDLE );
-	vkQueueWaitIdle( vk.queue );
+	R_VKFatal( vkQueueSubmit( vk.queue, 1, &submit, VK_NULL_HANDLE ), "vkQueueSubmit" );
+	R_VKFatal( vkQueueWaitIdle( vk.queue ), "vkQueueWaitIdle" );
 	vkResetCommandBuffer( frame->upload, 0 );
 	vkResetCommandBuffer( frame->cmd, 0 );
 	vk.upload_open = vk.cmd_open = false;
@@ -867,7 +877,7 @@ static qboolean R_VKAcquire( void )
 		return false;
 	}
 	if( result == VK_ERROR_DEVICE_LOST )
-		gEngfuncs.Host_Error( "ref_vk: the device was lost\n" );
+		R_VKFatal( result, "vkAcquireNextImageKHR" );
 	if( result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR )
 	{
 		R_VKCheck( result, "vkAcquireNextImageKHR" );
@@ -1050,9 +1060,7 @@ void R_GL3Present( void )
 		}
 
 		vkResetFences( vk.device, 1, &frame->done );
-		result = vkQueueSubmit( vk.queue, 1, &submit, frame->done );
-		if( result == VK_ERROR_DEVICE_LOST )
-			gEngfuncs.Host_Error( "ref_vk: the device was lost\n" );
+		R_VKFatal( vkQueueSubmit( vk.queue, 1, &submit, frame->done ), "vkQueueSubmit" );
 	}
 
 	if( vk.acquired )
@@ -1068,7 +1076,9 @@ void R_GL3Present( void )
 		};
 
 		result = vkQueuePresentKHR( vk.queue, &present );
-		if( result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR )
+		if( result == VK_ERROR_DEVICE_LOST )
+			R_VKFatal( result, "vkQueuePresentKHR" );
+		if( result != VK_SUCCESS )
 			vk.rebuild = true;
 	}
 
@@ -1080,7 +1090,7 @@ void R_GL3Present( void )
 	// on to the next frame, and everything of it is idle from here
 	vk.frame = ( vk.frame + 1 ) % VK_FRAMES;
 	frame = &vk.frames[vk.frame];
-	vkWaitForFences( vk.device, 1, &frame->done, VK_TRUE, UINT64_MAX );
+	R_VKFatal( vkWaitForFences( vk.device, 1, &frame->done, VK_TRUE, UINT64_MAX ), "vkWaitForFences" );
 	vkResetCommandBuffer( frame->cmd, 0 );
 	vkResetCommandBuffer( frame->upload, 0 );
 	R_VKResetFrame( frame );
@@ -1151,6 +1161,10 @@ qboolean R_GL3SetMSAA( int samples )
 	VkImageView resolve_view;
 	gl3_handle_t color;
 
+	// a frame cut short by an error is still being recorded, and it uses the target about to go
+	R_VKEndPass();
+	R_VKSubmitAndWait();
+	vk.started[VK_TARGET_SCENE] = false;
 	vkDeviceWaitIdle( vk.device );
 
 	if( vk.scene_texture )
