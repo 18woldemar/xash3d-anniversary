@@ -235,6 +235,11 @@ static void SubdividePolygon_r( model_t *loadmodel, msurface_t *warpface, int nu
 		v = verts;
 		for( j = 0; j < numverts; j++, v += 3 )
 		{
+			// clipping adds points, so f and b outgrow numverts; a non-convex face from the map
+			// could push them past the stack arrays, which the numverts check above does not bound
+			if( f >= SUBDIVIDE_SIZE - 1 || b >= SUBDIVIDE_SIZE - 1 )
+				gEngfuncs.Host_Error( "%s: too many vertexes on face\n", __func__ );
+
 			if( dist[j] >= 0 )
 			{
 				VectorCopy( v, front[f] );
