@@ -525,6 +525,11 @@ void      GL_UpdateSwapInterval( void );
 int GL_SetAttribute( int attr, int val );
 int GL_GetAttribute( int attr, int *val );
 void GL_SwapBuffers( void );
+#if XASH_SDL
+void *VK_GetInstanceProcAddr( void );
+qboolean VK_GetInstanceExtensions( unsigned int *count, const char **names );
+qboolean VK_CreateSurface( void *instance, void *surface );
+#endif
 void *SW_LockBuffer( void );
 void SW_UnlockBuffer( void );
 qboolean SW_CreateBuffer( int width, int height, uint *stride, uint *bpp, uint *r, uint *g, uint *b );

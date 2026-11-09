@@ -21,6 +21,7 @@ GNU General Public License for more details.
 #include "common.h"
 #include "wrect.h"
 #include <SDL3/SDL_system.h>
+#include <SDL3/SDL_vulkan.h>
 
 #if XASH_WIN32
 #include <windows.h>
@@ -173,7 +174,9 @@ static qboolean VID_CreateWindow( const int input_width, const int input_height,
 	SetBits( flags, SDL_WINDOW_HIGH_PIXEL_DENSITY );
 #endif // !XASH_WIN32
 
-	if( !glw_state.software )
+	if( glw_state.vulkan )
+		SetBits( flags, SDL_WINDOW_VULKAN );
+	else if( !glw_state.software )
 		SetBits( flags, SDL_WINDOW_OPENGL );
 
 	if( vid_maximized.value )
@@ -252,7 +255,7 @@ static qboolean VID_CreateWindow( const int input_width, const int input_height,
 			Con_Printf( "SDL_Renderer %s initialized\n", SDL_GetRendererName( sw.renderer ));
 		}
 	}
-	else
+	else if( !glw_state.vulkan )
 	{
 		glw_state.context = SDL_GL_CreateContext( host.hWnd );
 
@@ -433,6 +436,9 @@ platform_orientation_t Platform_GetDisplayOrientation( void )
 
 void GL_UpdateSwapInterval( void )
 {
+	if( glw_state.vulkan )
+		return; // the renderer reads gl_vsync for its swapchain
+
 	if( FBitSet( gl_vsync.flags, FCVAR_CHANGED ))
 	{
 		ClearBits( gl_vsync.flags, FCVAR_CHANGED );
@@ -473,6 +479,14 @@ qboolean R_Init_Video( ref_graphic_apis_t type )
 
 		break;
 	}
+	case REF_VULKAN:
+		if( !SDL_Vulkan_LoadLibrary( NULL ))
+		{
+			Con_Reportf( S_ERROR "Couldn't initialize Vulkan: %s\n", SDL_GetError( ));
+			return false;
+		}
+		glw_state.vulkan = true;
+		break;
 	default:
 		Host_Error( "Can't initialize unknown context type %d!\n", type );
 		break;
@@ -486,6 +500,7 @@ qboolean R_Init_Video( ref_graphic_apis_t type )
 	{
 	case REF_SOFTWARE:
 	case REF_D3D:
+	case REF_VULKAN:
 		break;
 	case REF_GL:
 		ref.dllFuncs.GL_InitExtensions();
@@ -511,6 +526,12 @@ void R_Free_Video( void )
 	{
 		SDL_DestroyWindow( host.hWnd );
 		host.hWnd = NULL;
+	}
+
+	if( glw_state.vulkan )
+	{
+		SDL_Vulkan_UnloadLibrary();
+		glw_state.vulkan = false;
 	}
 
 	refState.window_mode = WINDOW_MODE_WINDOWED;
@@ -591,6 +612,29 @@ int GL_GetAttribute( int attr, int *val )
 void GL_SwapBuffers( void )
 {
 	SDL_GL_SwapWindow( host.hWnd );
+}
+
+void *VK_GetInstanceProcAddr( void )
+{
+	return (void *)SDL_Vulkan_GetVkGetInstanceProcAddr();
+}
+
+qboolean VK_GetInstanceExtensions( unsigned int *count, const char **names )
+{
+	const char *const *list = SDL_Vulkan_GetInstanceExtensions( count );
+
+	if( !list )
+		return false;
+
+	if( names )
+		memcpy( names, list, *count * sizeof( *names ));
+
+	return true;
+}
+
+qboolean VK_CreateSurface( void *instance, void *surface )
+{
+	return SDL_Vulkan_CreateSurface( host.hWnd, (VkInstance)instance, NULL, (VkSurfaceKHR *)surface );
 }
 
 void *GL_GetProcAddress( const char *name )

@@ -303,6 +303,23 @@ static screenfade_t *pfnRefGetScreenFade( void )
 	return &clgame.fade;
 }
 
+#if !XASH_SDL
+static void *VK_GetInstanceProcAddr( void )
+{
+	return NULL;
+}
+
+static qboolean VK_GetInstanceExtensions( unsigned int *count, const char **names )
+{
+	return false;
+}
+
+static qboolean VK_CreateSurface( void *instance, void *surface )
+{
+	return false;
+}
+#endif
+
 static qboolean R_Init_Video_( ref_graphic_apis_t type )
 {
 	const char *config_name = ref.dllFuncs.R_GetConfigName ? ref.dllFuncs.R_GetConfigName() : NULL;
@@ -417,6 +434,10 @@ static const ref_api_t gEngfuncs =
 	SW_CreateBuffer,
 	SW_LockBuffer,
 	SW_UnlockBuffer,
+
+	VK_GetInstanceProcAddr,
+	VK_GetInstanceExtensions,
+	VK_CreateSurface,
 
 	R_FatPVS,
 	GL_GetOverviewParms,
@@ -713,6 +734,9 @@ static void R_CollectRendererNames( void )
 #if XASH_REF_SOFT_ENABLED
 		"soft",
 #endif
+#if XASH_REF_VK_ENABLED
+		"vk", // last until it is finished: only -ref vk reaches it
+#endif
 	};
 
 	// ordering is important here too!
@@ -738,6 +762,9 @@ static void R_CollectRendererNames( void )
 #endif
 #if XASH_REF_SOFT_ENABLED
 		"Software",
+#endif
+#if XASH_REF_VK_ENABLED
+		"Vulkan",
 #endif
 	};
 

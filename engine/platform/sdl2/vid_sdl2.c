@@ -13,6 +13,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 */
 #include <SDL.h>
+#include <SDL_vulkan.h>
 #include <SDL_config.h>
 #include "common.h"
 #include "client.h"
@@ -355,6 +356,9 @@ GL_UpdateSwapInterval
 */
 void GL_UpdateSwapInterval( void )
 {
+	if( glw_state.vulkan )
+		return; // the renderer reads gl_vsync for its swapchain
+
 	if( FBitSet( gl_vsync.flags, FCVAR_CHANGED ))
 	{
 		ClearBits( gl_vsync.flags, FCVAR_CHANGED );
@@ -388,6 +392,8 @@ static void VID_GetWindowSizeInPixels( SDL_Window *window, SDL_Renderer *rendere
 #else
 	if( glw_state.software )
 		SDL_GetRendererOutputSize( renderer, w, h );
+	else if( glw_state.vulkan )
+		SDL_Vulkan_GetDrawableSize( window, w, h );
 	else
 		SDL_GL_GetDrawableSize( window, w, h );
 #endif
@@ -672,7 +678,9 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height, 
 	SetBits( flags, SDL_WINDOW_ALLOW_HIGHDPI );
 #endif // !XASH_WIN32
 
-	if( !glw_state.software )
+	if( glw_state.vulkan )
+		SetBits( flags, SDL_WINDOW_VULKAN );
+	else if( !glw_state.software )
 		SetBits( flags, SDL_WINDOW_OPENGL );
 
 	if( vid_maximized.value )
@@ -723,7 +731,7 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height, 
 			Con_Printf( "SDL_Renderer %s initialized\n", info.name );
 		}
 	}
-	else
+	else if( !glw_state.vulkan )
 	{
 		glw_state.context = SDL_GL_CreateContext( host.hWnd );
 
@@ -805,6 +813,21 @@ static void GL_SetupAttributes( void )
 void GL_SwapBuffers( void )
 {
 	SDL_GL_SwapWindow( host.hWnd );
+}
+
+void *VK_GetInstanceProcAddr( void )
+{
+	return SDL_Vulkan_GetVkGetInstanceProcAddr();
+}
+
+qboolean VK_GetInstanceExtensions( unsigned int *count, const char **names )
+{
+	return SDL_Vulkan_GetInstanceExtensions( host.hWnd, count, names ) == SDL_TRUE;
+}
+
+qboolean VK_CreateSurface( void *instance, void *surface )
+{
+	return SDL_Vulkan_CreateSurface( host.hWnd, (VkInstance)instance, (VkSurfaceKHR *)surface ) == SDL_TRUE;
 }
 
 int GL_SetAttribute( int attr, int val )
@@ -936,6 +959,14 @@ qboolean R_Init_Video( ref_graphic_apis_t type )
 			Con_Reportf( S_ERROR  "Couldn't initialize OpenGL: %s\n", SDL_GetError());
 			return false;
 		}
+		break;
+	case REF_VULKAN:
+		if( SDL_Vulkan_LoadLibrary( NULL ) < 0 )
+		{
+			Con_Reportf( S_ERROR "Couldn't initialize Vulkan: %s\n", SDL_GetError( ));
+			return false;
+		}
+		glw_state.vulkan = true;
 		break;
 	default:
 		Host_Error( "Can't initialize unknown context type %d!\n", type );
@@ -1156,6 +1187,12 @@ void R_Free_Video( void )
 	GL_DeleteContext ();
 
 	VID_DestroyWindow ();
+
+	if( glw_state.vulkan )
+	{
+		SDL_Vulkan_UnloadLibrary();
+		glw_state.vulkan = false;
+	}
 
 	R_FreeVideoModes();
 

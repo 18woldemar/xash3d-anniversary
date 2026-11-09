@@ -49,11 +49,16 @@ static void R_GL3ApplyStyle( int style )
 	gEngfuncs.Cvar_SetValue( "r_swwater", style == GL3_STYLE_ORIGINAL ? 0.0f : 1.0f );
 }
 
+// the API the window is made for: ref_vk builds this file too
+#ifndef GL3_RENDER_API
+#define GL3_RENDER_API REF_GL
+#endif
+
 static qboolean gl3_device_ready;
 
 static qboolean R_Init( void )
 {
-	if( !gEngfuncs.R_Init_Video( REF_GL ))
+	if( !gEngfuncs.R_Init_Video( GL3_RENDER_API ))
 	{
 		gEngfuncs.R_Free_Video();
 		return false;

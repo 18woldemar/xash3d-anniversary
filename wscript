@@ -122,6 +122,7 @@ SUBDIRS = [
 	Subproject('ref/common',            lambda x: x.env.CLIENT),
 	Subproject('ref/gl',                lambda x: x.env.CLIENT and (x.env.GL or x.env.NANOGL or x.env.GLWES or x.env.GL4ES or x.env.GLES3COMPAT)),
 	Subproject('ref/gl3',               lambda x: x.env.CLIENT and x.env.GL3),
+	Subproject('ref/vk',                lambda x: x.env.CLIENT and x.env.GL3 and x.env.VK),
 	Subproject('ref/soft',              lambda x: x.env.CLIENT and x.env.SOFT),
 	Subproject('ref/null',              lambda x: x.env.CLIENT and x.env.NULL),
 	Subproject('3rdparty/bzip2',        lambda x: x.env.CLIENT and not x.env.HAVE_SYSTEM_BZ2),
@@ -165,6 +166,7 @@ REFDLLS = [
 	RefDll('soft', False, all_renderers = False),
 	RefDll('gl', True),
 	RefDll('gl3', True),
+	RefDll('vk', True),
 	RefDll('gles1', False, 'NANOGL'),
 	RefDll('gles2', False, 'GLWES'),
 	RefDll('gl4es', False),
@@ -576,6 +578,9 @@ def configure(conf):
 
 	for refdll in REFDLLS:
 		refdll.register_env(conf.env, conf.options, conf.options.ALL_RENDERERS)
+
+	if conf.env.VK and not conf.check_cc(header_name='vulkan/vulkan.h', mandatory=False):
+		conf.env.VK = False
 
 	conf.env.GAMEDIR = conf.options.GAMEDIR
 	conf.define('XASH_GAMEDIR', conf.options.GAMEDIR)
