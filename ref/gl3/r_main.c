@@ -49,6 +49,8 @@ static void R_GL3ApplyStyle( int style )
 	gEngfuncs.Cvar_SetValue( "r_swwater", style == GL3_STYLE_ORIGINAL ? 0.0f : 1.0f );
 }
 
+static qboolean gl3_device_ready;
+
 static qboolean R_Init( void )
 {
 	if( !gEngfuncs.R_Init_Video( REF_GL ))
@@ -57,6 +59,10 @@ static qboolean R_Init( void )
 		return false;
 	}
 
+	// the shot tools pass their own value
+	r_msaa = gEngfuncs.Cvar_Get( "r_msaa", "4", 0, "multisampling of the 3D view: 0, 2 or 4 samples" );
+	r_style = gEngfuncs.Cvar_Get( "r_style", "2", FCVAR_ARCHIVE,
+		"render style: 0 the original accelerated renderer, 1 the software one, 2 ours" );
 	r_temppool = Mem_AllocPool( "ref_gl3 zone" );
 	GL_InitRandomTable();
 	R_GL3InitScene();
@@ -64,9 +70,11 @@ static qboolean R_Init( void )
 	// no 3.3 context: the engine goes on to the next renderer in its list, so the window goes too
 	if( !R_GL3CreateDevice( gpGlobals->width, gpGlobals->height ))
 	{
+		Mem_FreePool( &r_temppool );
 		gEngfuncs.R_Free_Video();
 		return false;
 	}
+	gl3_device_ready = true;
 
 	R_GL3InitImages();
 	if( !R_GL3InitDraw( ) || !R_GL3InitWorld( ))
@@ -75,17 +83,17 @@ static qboolean R_Init( void )
 	if( !R_GL3InitStudioMeshes( ))
 		return false;
 	r_showtex = gEngfuncs.Cvar_Get( "r_showtex", "0", 0, "draw this texture number over the frame (r_texstats list shows the numbers)" );
-	// the shot tools pass their own value
-	r_msaa = gEngfuncs.Cvar_Get( "r_msaa", "4", 0, "multisampling of the 3D view: 0, 2 or 4 samples" );
 	R_GL3InitFlashlight();
-	r_style = gEngfuncs.Cvar_Get( "r_style", "2", FCVAR_ARCHIVE,
-		"render style: 0 the original accelerated renderer, 1 the software one, 2 ours" );
 	R_GL3ApplyStyle( R_GL3Style( ));
 	return true;
 }
 
 static void R_Shutdown( void )
 {
+	// the engine calls this after a failed R_Init too, and without a device there is no GL entry point to call
+	if( !gl3_device_ready )
+		return;
+
 	R_GL3FreeFlashlight();
 	R_GL3ShutdownWorld();
 	R_GL3ShutdownLightmaps();
