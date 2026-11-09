@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Starts c1a0 once per kind of damage to a model the map draws, on a scratch copy of the build: none may crash the engine.
+# Usage: badmodels [model]    (default scientist.mdl from RUN_DATA)
+set -uo pipefail
+tools=$(dirname "$(readlink -f "$0")")
+top=$(readlink -f "$tools/../..")
+data=${RUN_DATA:-$HOME/src/xbox-dev/assets/HalfLife-Steam}
+model=${1:-$data/valve/models/scientist.mdl}
+tree=$(mktemp -d /tmp/badmodels.XXXXXX)
+trap 'rm -rf "$tree"' EXIT
+cp -a "$top/build/prefix/." "$tree/"
+mkdir -p "$tree/valve/models"
+crashes=0
+
+damage()
+{
+	python3 -I - "$model" "$tree/valve/models/scientist.mdl" "$1" <<'EOF'
+import struct, sys
+src, dst, case = sys.argv[1:4]
+b = bytearray(open(src, 'rb').read())
+u = lambda o: struct.unpack_from('<i', b, o)[0]
+p = lambda o, v: struct.pack_into('<i', b, o, v)
+far = 0x7fff0000
+part = u(208)              # bodypartindex: name[64], nummodels, base, modelindex
+sub = u(part + 72)         # mstudiomodel_t: name[64], type, radius, nummesh, meshindex, numverts, vertinfoindex, vertindex, numnorms, norminfoindex, normindex
+mesh = u(sub + 76)         # mstudiomesh_t: numtris, triindex, skinref
+tri = u(mesh + 4)
+{
+	'vert': lambda: struct.pack_into('<h', b, tri + 2, 0x7000),
+	'tri_end': lambda: p(mesh + 4, u(72) - 2),
+	'tri_far': lambda: p(mesh + 4, far),
+	'skinref': lambda: p(mesh + 8, 0x7000),
+	'mesh_far': lambda: p(sub + 76, far),
+	'nummesh': lambda: p(sub + 72, 0xffffff),
+	'numverts': lambda: p(sub + 80, 0xffffff),
+	'vertinfo': lambda: p(sub + 84, far),
+	'vertindex': lambda: p(sub + 88, far),
+	'normindex': lambda: p(sub + 100, far),
+	'model_far': lambda: p(part + 72, far),
+	'nummodels': lambda: p(part + 64, 0xffffff),
+	'bodypart_far': lambda: p(208, far),
+	'numbodyparts': lambda: p(204, 0xffffff),
+	'bone_far': lambda: p(144, far),
+	'numbones': lambda: p(140, 0x7000),
+}[case]()
+open(dst, 'wb').write(b)
+EOF
+}
+
+for kind in vert tri_end tri_far skinref mesh_far nummesh numverts vertinfo vertindex normindex model_far nummodels bodypart_far numbodyparts bone_far numbones; do
+	damage "$kind"
+	RUN_DIR=$tree RUN_TIMEOUT=${BADMODELS_SECONDS:-14} "$tools/run" run -nosound +map c1a0 > /dev/null 2>&1
+	if grep -aq '^Crash' "$tree/engine.log"; then result=CRASH; crashes=$((crashes + 1)); else result=ok; fi
+	echo "$kind: $result: $(grep -aE 'points outside|ref_gl3: .*submodel|Could not load' "$tree/engine.log" | head -1 | cut -c1-100)"
+done
+echo "badmodels: $crashes crashes"
+[ "$crashes" -eq 0 ]

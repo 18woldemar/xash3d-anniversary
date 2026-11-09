@@ -1145,6 +1145,50 @@ MAYBE_UNUSED static qboolean Mod_StudioTexSizes( studiohdr_t *thdr, size_t texsi
 	return true;
 }
 
+static qboolean Mod_StudioRange( const studiohdr_t *phdr, int32_t offset, int32_t count, size_t size )
+{
+	return count == 0 || ( count > 0 && offset >= 0 && (int64_t)offset + count * (int64_t)size <= phdr->length );
+}
+
+/*
+=================
+Mod_StudioGeometryFits
+
+Models come from servers too, and everything that walks one (both renderers, the bounds, the hull trace)
+trusts these offsets. Only called once phdr->length is known to fit the file.
+=================
+*/
+static qboolean Mod_StudioGeometryFits( const studiohdr_t *phdr )
+{
+	const mstudiobodyparts_t *bodypart;
+
+	if( phdr->numbones > MAXSTUDIOBONES || !Mod_StudioRange( phdr, phdr->boneindex, phdr->numbones, sizeof( mstudiobone_t ))
+		|| !Mod_StudioRange( phdr, phdr->bodypartindex, phdr->numbodyparts, sizeof( mstudiobodyparts_t )))
+		return false;
+
+	bodypart = (const mstudiobodyparts_t *)((const byte *)phdr + phdr->bodypartindex);
+
+	for( int i = 0; i < phdr->numbodyparts; i++ )
+	{
+		const mstudiomodel_t *submodel = (const mstudiomodel_t *)((const byte *)phdr + bodypart[i].modelindex);
+
+		if( !Mod_StudioRange( phdr, bodypart[i].modelindex, bodypart[i].nummodels, sizeof( mstudiomodel_t )))
+			return false;
+
+		for( int j = 0; j < bodypart[i].nummodels; j++ )
+		{
+			if( !Mod_StudioRange( phdr, submodel[j].meshindex, submodel[j].nummesh, sizeof( mstudiomesh_t ))
+				|| !Mod_StudioRange( phdr, submodel[j].vertinfoindex, submodel[j].numverts, sizeof( byte ))
+				|| !Mod_StudioRange( phdr, submodel[j].vertindex, submodel[j].numverts, sizeof( vec3_t ))
+				|| !Mod_StudioRange( phdr, submodel[j].norminfoindex, submodel[j].numnorms, sizeof( byte ))
+				|| !Mod_StudioRange( phdr, submodel[j].normindex, submodel[j].numnorms, sizeof( vec3_t )))
+				return false;
+		}
+	}
+
+	return true;
+}
+
 /*
 =================
 Mod_LoadStudioModel
@@ -1164,6 +1208,12 @@ void Mod_LoadStudioModel( model_t *mod, void *buffer, size_t buffersize, qboolea
 	studiohdr_t *phdr = R_StudioLoadHeader( mod, buffer, buffersize );
 	if( !phdr || phdr->length < (int32_t)sizeof( studiohdr_t ) || (size_t)phdr->length > buffersize ) // garbage value in length
 		return;	// bad model
+
+	if( !Mod_StudioGeometryFits( phdr ))
+	{
+		Con_Printf( S_ERROR "%s: %s points outside its file\n", __func__, mod->name );
+		return;
+	}
 
 #if !XASH_DEDICATED
 	if( !Host_IsDedicated( ) && phdr->numtextures == 0 )
