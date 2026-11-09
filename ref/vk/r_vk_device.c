@@ -584,7 +584,8 @@ static qboolean R_VKCreateSwapchain( void )
 	R_VKFreeSwapchainImages();
 
 	{
-		VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		// screenshots and save pictures copy from it, where the surface allows that
+		const VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | ( caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT );
 		VkSwapchainCreateInfoKHR info =
 		{
 			.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -603,6 +604,7 @@ static qboolean R_VKCreateSwapchain( void )
 		};
 
 		info.imageUsage = usage;
+		vk.swap_readable = FBitSet( usage, VK_IMAGE_USAGE_TRANSFER_SRC_BIT ) ? true : false;
 
 		if( !R_VKCheck( vkCreateSwapchainKHR( vk.device, &info, NULL, &vk.swapchain ), "vkCreateSwapchainKHR" ))
 		{

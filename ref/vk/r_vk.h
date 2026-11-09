@@ -239,6 +239,7 @@ typedef struct
 	int             size_w, size_h; // the window size the swapchain was made for
 	int             vsync;
 	qboolean        rebuild;
+	qboolean        swap_readable; // its images can be copied from
 
 	// the flashlight's map
 	VkFramebuffer   shadow_framebuffer;

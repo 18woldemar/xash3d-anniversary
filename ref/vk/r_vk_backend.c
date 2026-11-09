@@ -1222,7 +1222,10 @@ qboolean R_GL3BackendReadScreen( byte *rgba, int width, int height )
 
 	memset( rgba, 0, bytes );
 
-	if( !R_VKEnsurePass( ) || !vk.acquired || !R_VKAddChunk( &ring, bytes ))
+	if( !vk.swap_readable )
+		gEngfuncs.Con_Printf( S_ERROR "ref_vk: this window can't be read back, the picture is black\n" );
+
+	if( !vk.swap_readable || !R_VKEnsurePass( ) || !vk.acquired || !R_VKAddChunk( &ring, bytes ))
 		return false;
 
 	R_VKEndPass();
