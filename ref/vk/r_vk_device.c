@@ -28,49 +28,11 @@ VK_INSTANCE_FUNCTIONS( VK_DEFINE )
 VK_DEVICE_FUNCTIONS( VK_DEFINE )
 #undef VK_DEFINE
 
-#define VK_FRAMES        2
-#define VK_MAX_SWAP      16
-#define VK_MAX_ITEMS     32 // physical devices, queue families, surface formats, present modes
+#define VK_MAX_ITEMS 32 // physical devices, queue families, surface formats, present modes
 
-typedef struct
-{
-	VkCommandBuffer cmd;
-	VkFence         done;
-	VkSemaphore     acquired;
-} vk_frame_t;
+vk_t vk;
 
-static struct
-{
-	VkInstance       instance;
-	VkSurfaceKHR     surface;
-	VkPhysicalDevice physical;
-	VkDevice         device;
-	VkQueue          queue;
-	uint32_t         family;
-	VkCommandPool    pool;
-	VkRenderPass     pass;
-	VkFormat         format;
-	VkColorSpaceKHR  colorspace;
-
-	VkSwapchainKHR swapchain;
-	uint32_t       num_images;
-	VkImage        images[VK_MAX_SWAP];
-	VkImageView    views[VK_MAX_SWAP];
-	VkFramebuffer  framebuffers[VK_MAX_SWAP];
-	VkSemaphore    rendered[VK_MAX_SWAP]; // one per image: a present holds its semaphore until the image comes back
-	VkExtent2D     extent;
-	int            size_w, size_h; // the window size the swapchain was made for
-	int            vsync;
-	qboolean       rebuild;
-
-	vk_frame_t frames[VK_FRAMES];
-	uint       frame;
-	float      clear[3];
-
-	cvar_t *gl_vsync;
-} vk;
-
-static qboolean R_VKCheck( VkResult result, const char *what )
+qboolean R_VKCheck( VkResult result, const char *what )
 {
 	if( result == VK_SUCCESS )
 		return true;
@@ -244,14 +206,24 @@ static qboolean R_VKCreateLogicalDevice( void )
 		.queueCount = 1,
 		.pQueuePriorities = &priority,
 	};
-	const VkDeviceCreateInfo info =
+	VkPhysicalDeviceFeatures available, features;
+	VkPhysicalDeviceProperties props;
+	VkDeviceCreateInfo info =
 	{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.queueCreateInfoCount = 1,
 		.pQueueCreateInfos = &queue,
 		.enabledExtensionCount = ARRAYSIZE( extensions ),
 		.ppEnabledExtensionNames = extensions,
+		.pEnabledFeatures = &features,
 	};
+
+	vkGetPhysicalDeviceProperties( vk.physical, &props );
+	vk.limits = props.limits;
+	vkGetPhysicalDeviceFeatures( vk.physical, &available );
+	memset( &features, 0, sizeof( features ));
+	features.samplerAnisotropy = available.samplerAnisotropy;
+	vk.anisotropy = available.samplerAnisotropy;
 
 	if( !R_VKCheck( vkCreateDevice( vk.physical, &info, NULL, &vk.device ), "vkCreateDevice" ))
 		return false;
@@ -283,7 +255,25 @@ static qboolean R_VKPickFormat( void )
 		{
 			vk.format = formats[i].format;
 			vk.colorspace = formats[i].colorSpace;
-			return true;
+			break;
+		}
+	}
+
+	if( vk.format != VK_FORMAT_UNDEFINED )
+	{
+		// the specification guarantees one of the two
+		static const VkFormat depths[] = { VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_D32_SFLOAT };
+
+		for( int i = 0; i < ARRAYSIZE( depths ); i++ )
+		{
+			VkFormatProperties props;
+
+			vkGetPhysicalDeviceFormatProperties( vk.physical, depths[i], &props );
+			if( FBitSet( props.optimalTilingFeatures, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT ))
+			{
+				vk.depth_format = depths[i];
+				return true;
+			}
 		}
 	}
 
@@ -291,47 +281,130 @@ static qboolean R_VKPickFormat( void )
 	return false;
 }
 
-static qboolean R_VKCreateRenderPass( void )
+static VkRenderPass R_VKMakeSwapPass( qboolean clear )
 {
-	const VkAttachmentDescription color =
+	VkRenderPass pass = VK_NULL_HANDLE;
+	const VkAttachmentDescription attachments[2] =
 	{
-		.format = vk.format,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		{
+			.format = vk.format,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = clear ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		},
+		{
+			.format = vk.depth_format,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = clear ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+			.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		},
 	};
-	const VkAttachmentReference reference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+	const VkAttachmentReference color = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+	const VkAttachmentReference depth = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
 	const VkSubpassDescription subpass =
 	{
 		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
 		.colorAttachmentCount = 1,
-		.pColorAttachments = &reference,
+		.pColorAttachments = &color,
+		.pDepthStencilAttachment = &depth,
 	};
-	// the layout change waits for the acquire semaphore, which is waited on at the colour output stage
-	const VkSubpassDependency dependency =
+	// Coming in: the layout change waits for the acquire semaphore, and a pass after a break for the one before it,
+	// and for the copy that made the break. Going out: the copy or barrier that follows.
+	const VkPipelineStageFlags outputs = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+	const VkAccessFlags writes = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	const VkSubpassDependency dependencies[2] =
 	{
-		.srcSubpass = VK_SUBPASS_EXTERNAL,
-		.dstSubpass = 0,
-		.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		{
+			.srcSubpass = VK_SUBPASS_EXTERNAL,
+			.dstSubpass = 0,
+			.srcStageMask = outputs,
+			.dstStageMask = outputs | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			.srcAccessMask = writes,
+			.dstAccessMask = writes | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+		},
+		{
+			.srcSubpass = 0,
+			.dstSubpass = VK_SUBPASS_EXTERNAL,
+			.srcStageMask = outputs,
+			.dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+			.srcAccessMask = writes,
+			.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+		},
 	};
 	const VkRenderPassCreateInfo info =
 	{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-		.attachmentCount = 1,
-		.pAttachments = &color,
+		.attachmentCount = ARRAYSIZE( attachments ),
+		.pAttachments = attachments,
 		.subpassCount = 1,
 		.pSubpasses = &subpass,
-		.dependencyCount = 1,
-		.pDependencies = &dependency,
+		.dependencyCount = ARRAYSIZE( dependencies ),
+		.pDependencies = dependencies,
 	};
 
-	return R_VKCheck( vkCreateRenderPass( vk.device, &info, NULL, &vk.pass ), "vkCreateRenderPass" );
+	R_VKCheck( vkCreateRenderPass( vk.device, &info, NULL, &pass ), "vkCreateRenderPass" );
+	return pass;
+}
+
+static qboolean R_VKCreateRenderPasses( void )
+{
+	vk.pass_clear = R_VKMakeSwapPass( true );
+	vk.pass_load = R_VKMakeSwapPass( false );
+	return vk.pass_clear && vk.pass_load;
+}
+
+static void R_VKFreeDepth( void )
+{
+	if( vk.depth_view )
+		vkDestroyImageView( vk.device, vk.depth_view, NULL );
+	if( vk.depth )
+		vkDestroyImage( vk.device, vk.depth, NULL );
+	R_VKFreeMemory( &vk.depth_memory );
+	vk.depth_view = VK_NULL_HANDLE;
+	vk.depth = VK_NULL_HANDLE;
+}
+
+// the swapchain's depth: a 3D scene the menu draws into the 2D part (the player model's preview) needs one
+static qboolean R_VKCreateDepth( void )
+{
+	const VkImageCreateInfo image =
+	{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = vk.depth_format,
+		.extent = { vk.extent.width, vk.extent.height, 1 },
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
+
+	if( !R_VKCheck( vkCreateImage( vk.device, &image, NULL, &vk.depth ), "vkCreateImage" )
+		|| !R_VKAllocImageMemory( vk.depth, &vk.depth_memory ))
+		return false;
+
+	{
+		const VkImageViewCreateInfo view =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = vk.depth,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = vk.depth_format,
+			.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 },
+		};
+
+		return R_VKCheck( vkCreateImageView( vk.device, &view, NULL, &vk.depth_view ), "vkCreateImageView" );
+	}
 }
 
 static void R_VKFreeSwapchainImages( void )
@@ -346,6 +419,7 @@ static void R_VKFreeSwapchainImages( void )
 		vk.views[i] = VK_NULL_HANDLE;
 	}
 	vk.num_images = 0;
+	R_VKFreeDepth();
 }
 
 static qboolean R_VKCreateSwapchainImages( void )
@@ -360,6 +434,9 @@ static qboolean R_VKCreateSwapchainImages( void )
 	}
 	vkGetSwapchainImagesKHR( vk.device, vk.swapchain, &count, vk.images );
 
+	if( !R_VKCreateDepth( ))
+		return false;
+
 	for( uint32_t i = 0; i < count; i++ )
 	{
 		const VkImageViewCreateInfo view =
@@ -371,11 +448,13 @@ static qboolean R_VKCreateSwapchainImages( void )
 			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
 		};
 		const VkSemaphoreCreateInfo semaphore = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+		VkImageView attachments[2] = { VK_NULL_HANDLE, vk.depth_view };
 		VkFramebufferCreateInfo framebuffer =
 		{
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-			.renderPass = vk.pass,
-			.attachmentCount = 1,
+			.renderPass = vk.pass_clear,
+			.attachmentCount = ARRAYSIZE( attachments ),
+			.pAttachments = attachments,
 			.width = vk.extent.width,
 			.height = vk.extent.height,
 			.layers = 1,
@@ -386,7 +465,7 @@ static qboolean R_VKCreateSwapchainImages( void )
 		if( !R_VKCheck( vkCreateImageView( vk.device, &view, NULL, &vk.views[i] ), "vkCreateImageView" ))
 			return false;
 
-		framebuffer.pAttachments = &vk.views[i];
+		attachments[0] = vk.views[i];
 		if( !R_VKCheck( vkCreateFramebuffer( vk.device, &framebuffer, NULL, &vk.framebuffers[i] ), "vkCreateFramebuffer" ))
 			return false;
 
@@ -536,13 +615,19 @@ static qboolean R_VKCreateFrames( void )
 			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 			.commandPool = vk.pool,
 			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-			.commandBufferCount = 1,
+			.commandBufferCount = 2,
 		};
+		VkCommandBuffer buffers[2];
 		const VkFenceCreateInfo fence = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT };
 		const VkSemaphoreCreateInfo semaphore = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
 
-		if( !R_VKCheck( vkAllocateCommandBuffers( vk.device, &cmd, &vk.frames[i].cmd ), "vkAllocateCommandBuffers" )
-			|| !R_VKCheck( vkCreateFence( vk.device, &fence, NULL, &vk.frames[i].done ), "vkCreateFence" )
+		if( !R_VKCheck( vkAllocateCommandBuffers( vk.device, &cmd, buffers ), "vkAllocateCommandBuffers" ))
+			return false;
+
+		vk.frames[i].cmd = buffers[0];
+		vk.frames[i].upload = buffers[1];
+
+		if( !R_VKCheck( vkCreateFence( vk.device, &fence, NULL, &vk.frames[i].done ), "vkCreateFence" )
 			|| !R_VKCheck( vkCreateSemaphore( vk.device, &semaphore, NULL, &vk.frames[i].acquired ), "vkCreateSemaphore" ))
 			return false;
 	}
@@ -564,6 +649,7 @@ void R_GL3DestroyDevice( void )
 		vkDeviceWaitIdle( vk.device );
 
 		R_VKFreeSwapchainImages();
+		R_VKShutdownBackend();
 
 		if( vk.swapchain )
 			vkDestroySwapchainKHR( vk.device, vk.swapchain, NULL );
@@ -578,8 +664,10 @@ void R_GL3DestroyDevice( void )
 
 		if( vk.pool )
 			vkDestroyCommandPool( vk.device, vk.pool, NULL );
-		if( vk.pass )
-			vkDestroyRenderPass( vk.device, vk.pass, NULL );
+		if( vk.pass_clear )
+			vkDestroyRenderPass( vk.device, vk.pass_clear, NULL );
+		if( vk.pass_load )
+			vkDestroyRenderPass( vk.device, vk.pass_load, NULL );
 
 		vkDestroyDevice( vk.device, NULL );
 	}
@@ -606,8 +694,9 @@ qboolean R_GL3CreateDevice( int width, int height )
 		|| !R_VKPickDevice()
 		|| !R_VKCreateLogicalDevice()
 		|| !R_VKPickFormat()
-		|| !R_VKCreateRenderPass()
-		|| !R_VKCreateFrames())
+		|| !R_VKCreateRenderPasses()
+		|| !R_VKCreateFrames()
+		|| !R_VKInitBackend())
 	{
 		R_GL3DestroyDevice();
 		return false;
@@ -618,11 +707,63 @@ qboolean R_GL3CreateDevice( int width, int height )
 	return true;
 }
 
-void R_GL3Clear( byte r, byte g, byte b )
+static void R_VKBeginCommands( VkCommandBuffer cmd )
 {
-	vk.clear[0] = r / 255.0f;
-	vk.clear[1] = g / 255.0f;
-	vk.clear[2] = b / 255.0f;
+	const VkCommandBufferBeginInfo begin =
+	{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+
+	vkBeginCommandBuffer( cmd, &begin );
+}
+
+VkCommandBuffer R_VKCmd( void )
+{
+	vk_frame_t *frame = &vk.frames[vk.frame];
+
+	if( !vk.cmd_open )
+	{
+		R_VKBeginCommands( frame->cmd );
+		vk.cmd_open = true;
+		R_VKMarkStateDirty();
+	}
+
+	return frame->cmd;
+}
+
+VkCommandBuffer R_VKUploadCmd( void )
+{
+	vk_frame_t *frame = &vk.frames[vk.frame];
+
+	if( !vk.upload_open )
+	{
+		R_VKBeginCommands( frame->upload );
+		vk.upload_open = true;
+	}
+
+	return frame->upload;
+}
+
+// the uploads so far, now: for between frames, where nothing else will submit them
+void R_VKFlushUploads( void )
+{
+	vk_frame_t *frame = &vk.frames[vk.frame];
+	const VkSubmitInfo submit =
+	{
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &frame->upload,
+	};
+
+	if( !vk.upload_open )
+		return;
+
+	vkEndCommandBuffer( frame->upload );
+	vk.upload_open = false;
+	vkQueueSubmit( vk.queue, 1, &submit, VK_NULL_HANDLE );
+	vkQueueWaitIdle( vk.queue );
+	vkResetCommandBuffer( frame->upload, 0 );
 }
 
 static qboolean R_VKNeedsRebuild( void )
@@ -631,90 +772,221 @@ static qboolean R_VKNeedsRebuild( void )
 		|| vk.vsync != ( vk.gl_vsync->value != 0.0f );
 }
 
-void R_GL3Present( void )
+static qboolean R_VKAcquire( void )
 {
 	vk_frame_t *frame = &vk.frames[vk.frame];
-	uint32_t index;
 	VkResult result;
 
 	if( R_VKNeedsRebuild( ) && !R_VKCreateSwapchain( ))
-		return;
+		return false;
 
-	vkWaitForFences( vk.device, 1, &frame->done, VK_TRUE, UINT64_MAX );
-
-	result = vkAcquireNextImageKHR( vk.device, vk.swapchain, UINT64_MAX, frame->acquired, VK_NULL_HANDLE, &index );
+	result = vkAcquireNextImageKHR( vk.device, vk.swapchain, UINT64_MAX, frame->acquired, VK_NULL_HANDLE, &vk.image_index );
 	if( result == VK_ERROR_OUT_OF_DATE_KHR )
 	{
 		vk.rebuild = true; // nothing was signalled: the semaphore can be used again
-		return;
+		return false;
 	}
 	if( result == VK_ERROR_DEVICE_LOST )
 		gEngfuncs.Host_Error( "ref_vk: the device was lost\n" );
 	if( result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR )
 	{
 		R_VKCheck( result, "vkAcquireNextImageKHR" );
-		return;
+		return false;
 	}
 
-	vkResetFences( vk.device, 1, &frame->done );
-	vkResetCommandBuffer( frame->cmd, 0 );
+	vk.acquired = true;
+	return true;
+}
+
+qboolean R_VKEnsurePass( void )
+{
+	if( vk.pass_open )
+		return true;
+
+	if( vk.skip )
+		return false;
+
+	if( !vk.acquired && !R_VKAcquire( ))
+	{
+		vk.skip = true;
+		return false;
+	}
 
 	{
-		const VkCommandBufferBeginInfo begin =
+		const VkClearValue clear[2] =
 		{
-			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+			{ .color = { .float32 = { vk.clear[0], vk.clear[1], vk.clear[2], 1.0f }}},
+			{ .depthStencil = { 1.0f, 0 }},
 		};
-		const VkClearValue clear = { .color = { .float32 = { vk.clear[0], vk.clear[1], vk.clear[2], 1.0f }}};
 		const VkRenderPassBeginInfo pass =
 		{
 			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-			.renderPass = vk.pass,
-			.framebuffer = vk.framebuffers[index],
+			.renderPass = vk.started ? vk.pass_load : vk.pass_clear,
+			.framebuffer = vk.framebuffers[vk.image_index],
 			.renderArea = { { 0, 0 }, vk.extent },
-			.clearValueCount = 1,
-			.pClearValues = &clear,
+			.clearValueCount = ARRAYSIZE( clear ),
+			.pClearValues = clear,
 		};
 
-		vkBeginCommandBuffer( frame->cmd, &begin );
-		vkCmdBeginRenderPass( frame->cmd, &pass, VK_SUBPASS_CONTENTS_INLINE );
-		vkCmdEndRenderPass( frame->cmd );
-		vkEndCommandBuffer( frame->cmd );
+		vkCmdBeginRenderPass( R_VKCmd( ), &pass, VK_SUBPASS_CONTENTS_INLINE );
+		vk.pass_open = true;
+		vk.started = true;
+	}
+
+	return true;
+}
+
+void R_VKEndPass( void )
+{
+	if( !vk.pass_open )
+		return;
+
+	vkCmdEndRenderPass( vk.frames[vk.frame].cmd );
+	vk.pass_open = false;
+}
+
+void R_GL3Clear( byte r, byte g, byte b )
+{
+	vk.clear[0] = r / 255.0f;
+	vk.clear[1] = g / 255.0f;
+	vk.clear[2] = b / 255.0f;
+	R_GL3ClearBuffers( GL3_CLEAR_COLOR | GL3_CLEAR_DEPTH | GL3_CLEAR_STENCIL );
+}
+
+// the frame's first pass clears by itself: anything later has to do it inside a pass
+void R_GL3BackendClearBuffers( uint mask )
+{
+	VkClearAttachment attachments[2];
+	uint32_t count = 0;
+
+	if( !vk.started || !R_VKEnsurePass( ))
+		return;
+
+	if( FBitSet( mask, GL3_CLEAR_COLOR ))
+	{
+		attachments[count].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		attachments[count].colorAttachment = 0;
+		attachments[count].clearValue.color.float32[0] = vk.clear[0];
+		attachments[count].clearValue.color.float32[1] = vk.clear[1];
+		attachments[count].clearValue.color.float32[2] = vk.clear[2];
+		attachments[count].clearValue.color.float32[3] = 1.0f;
+		count++;
+	}
+
+	if( FBitSet( mask, GL3_CLEAR_DEPTH ))
+	{
+		attachments[count].aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		attachments[count].colorAttachment = 0;
+		attachments[count].clearValue.depthStencil.depth = 1.0f;
+		attachments[count].clearValue.depthStencil.stencil = 0;
+		count++;
+	}
+
+	if( count )
+	{
+		const VkClearRect rect = { { { 0, 0 }, vk.extent }, 0, 1 };
+
+		vkCmdClearAttachments( R_VKCmd( ), count, attachments, 1, &rect );
+	}
+}
+
+void R_GL3Present( void )
+{
+	vk_frame_t *frame = &vk.frames[vk.frame];
+	VkResult result;
+
+	// a frame that drew nothing still shows its clear
+	R_VKEnsurePass();
+	R_VKEndPass();
+
+	if( vk.acquired )
+	{
+		const VkImageMemoryBarrier barrier =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = vk.images[vk.image_index],
+			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+		};
+
+		vkCmdPipelineBarrier( R_VKCmd( ), VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
+			0, NULL, 0, NULL, 1, &barrier );
+	}
+
+	if( !vk.cmd_open && !vk.upload_open )
+	{
+		vk.skip = false; // no window to draw on, and nothing waiting to reach the GPU: the next frame tries again
+		return;
 	}
 
 	{
 		const VkPipelineStageFlags wait = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		const VkSubmitInfo submit =
+		VkCommandBuffer buffers[2];
+		VkSubmitInfo submit =
 		{
 			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-			.waitSemaphoreCount = 1,
-			.pWaitSemaphores = &frame->acquired,
+			.pCommandBuffers = buffers,
 			.pWaitDstStageMask = &wait,
-			.commandBufferCount = 1,
-			.pCommandBuffers = &frame->cmd,
-			.signalSemaphoreCount = 1,
-			.pSignalSemaphores = &vk.rendered[index],
 		};
+
+		// the uploads run first: they are what the frame's draws read
+		if( vk.upload_open )
+		{
+			vkEndCommandBuffer( frame->upload );
+			buffers[submit.commandBufferCount++] = frame->upload;
+		}
+		if( vk.cmd_open )
+		{
+			vkEndCommandBuffer( frame->cmd );
+			buffers[submit.commandBufferCount++] = frame->cmd;
+		}
+
+		if( vk.acquired )
+		{
+			submit.waitSemaphoreCount = 1;
+			submit.pWaitSemaphores = &frame->acquired;
+			submit.signalSemaphoreCount = 1;
+			submit.pSignalSemaphores = &vk.rendered[vk.image_index];
+		}
+
+		vkResetFences( vk.device, 1, &frame->done );
+		result = vkQueueSubmit( vk.queue, 1, &submit, frame->done );
+		if( result == VK_ERROR_DEVICE_LOST )
+			gEngfuncs.Host_Error( "ref_vk: the device was lost\n" );
+	}
+
+	if( vk.acquired )
+	{
 		const VkPresentInfoKHR present =
 		{
 			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 			.waitSemaphoreCount = 1,
-			.pWaitSemaphores = &vk.rendered[index],
+			.pWaitSemaphores = &vk.rendered[vk.image_index],
 			.swapchainCount = 1,
 			.pSwapchains = &vk.swapchain,
-			.pImageIndices = &index,
+			.pImageIndices = &vk.image_index,
 		};
-
-		result = vkQueueSubmit( vk.queue, 1, &submit, frame->done );
-		if( result == VK_ERROR_DEVICE_LOST )
-			gEngfuncs.Host_Error( "ref_vk: the device was lost\n" );
 
 		result = vkQueuePresentKHR( vk.queue, &present );
 		if( result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR )
 			vk.rebuild = true;
 	}
 
+	vk.cmd_open = vk.upload_open = false;
+	vk.acquired = vk.started = vk.skip = false;
+	vk.serial++;
+
+	// on to the next frame, and everything of it is idle from here
 	vk.frame = ( vk.frame + 1 ) % VK_FRAMES;
+	frame = &vk.frames[vk.frame];
+	vkWaitForFences( vk.device, 1, &frame->done, VK_TRUE, UINT64_MAX );
+	vkResetCommandBuffer( frame->cmd, 0 );
+	vkResetCommandBuffer( frame->upload, 0 );
+	R_VKResetFrame( frame );
 }
 
 /*

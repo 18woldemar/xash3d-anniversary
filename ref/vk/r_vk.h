@@ -28,6 +28,9 @@ GNU General Public License for more details.
 	X( vkDestroyInstance ) \
 	X( vkEnumeratePhysicalDevices ) \
 	X( vkGetPhysicalDeviceProperties ) \
+	X( vkGetPhysicalDeviceFeatures ) \
+	X( vkGetPhysicalDeviceMemoryProperties ) \
+	X( vkGetPhysicalDeviceFormatProperties ) \
 	X( vkGetPhysicalDeviceQueueFamilyProperties ) \
 	X( vkEnumerateDeviceExtensionProperties ) \
 	X( vkCreateDevice ) \
@@ -67,13 +70,168 @@ GNU General Public License for more details.
 	X( vkCreateFramebuffer ) \
 	X( vkDestroyFramebuffer ) \
 	X( vkCmdBeginRenderPass ) \
-	X( vkCmdEndRenderPass )
+	X( vkCmdEndRenderPass ) \
+	X( vkCreateBuffer ) \
+	X( vkDestroyBuffer ) \
+	X( vkGetBufferMemoryRequirements ) \
+	X( vkBindBufferMemory ) \
+	X( vkAllocateMemory ) \
+	X( vkFreeMemory ) \
+	X( vkMapMemory ) \
+	X( vkCreateImage ) \
+	X( vkDestroyImage ) \
+	X( vkGetImageMemoryRequirements ) \
+	X( vkBindImageMemory ) \
+	X( vkCreateSampler ) \
+	X( vkDestroySampler ) \
+	X( vkCreateShaderModule ) \
+	X( vkDestroyShaderModule ) \
+	X( vkCreatePipelineCache ) \
+	X( vkDestroyPipelineCache ) \
+	X( vkCreateGraphicsPipelines ) \
+	X( vkDestroyPipeline ) \
+	X( vkCreatePipelineLayout ) \
+	X( vkDestroyPipelineLayout ) \
+	X( vkCreateDescriptorSetLayout ) \
+	X( vkDestroyDescriptorSetLayout ) \
+	X( vkCreateDescriptorPool ) \
+	X( vkDestroyDescriptorPool ) \
+	X( vkResetDescriptorPool ) \
+	X( vkAllocateDescriptorSets ) \
+	X( vkUpdateDescriptorSets ) \
+	X( vkQueueWaitIdle ) \
+	X( vkCmdPipelineBarrier ) \
+	X( vkCmdCopyBufferToImage ) \
+	X( vkCmdBindPipeline ) \
+	X( vkCmdBindDescriptorSets ) \
+	X( vkCmdBindVertexBuffers ) \
+	X( vkCmdSetViewport ) \
+	X( vkCmdSetScissor ) \
+	X( vkCmdSetDepthBias ) \
+	X( vkCmdClearAttachments ) \
+	X( vkCmdDraw )
 
 #define VK_DECLARE( name ) extern PFN_##name name;
 VK_GLOBAL_FUNCTIONS( VK_DECLARE )
 VK_INSTANCE_FUNCTIONS( VK_DECLARE )
 VK_DEVICE_FUNCTIONS( VK_DECLARE )
 #undef VK_DECLARE
+
+#define VK_FRAMES     2
+#define VK_MAX_SWAP   16
+#define VK_MAX_CHUNKS 16
+#define VK_MAX_POOLS  32
+#define VK_MAX_DESTROY 8192
+
+// memory carved out of a block (r_vk_backend.c)
+typedef struct
+{
+	VkDeviceMemory memory;
+	VkDeviceSize   offset, size;
+	int            block;
+} vk_allocation_t;
+
+// a growing list of host-visible buffers, emptied when its frame has finished
+typedef struct
+{
+	VkBuffer        buffer;
+	VkDeviceMemory  memory;
+	byte           *mapped;
+	VkDeviceSize    size;
+	VkDescriptorSet uniforms; // the uniform ring's: both register blocks of this buffer
+} vk_chunk_t;
+
+typedef struct
+{
+	vk_chunk_t         chunks[VK_MAX_CHUNKS];
+	int                num_chunks, current;
+	VkDeviceSize       offset, chunk_size;
+	VkBufferUsageFlags usage;
+} vk_ring_t;
+
+typedef struct
+{
+	VkImage         image;
+	VkImageView     view;
+	vk_allocation_t memory;
+} vk_dead_image_t;
+
+// A frame's resources are idle whenever it is the current one: R_GL3Present waits for it right after moving on to it.
+typedef struct
+{
+	VkCommandBuffer cmd, upload;
+	VkFence         done;
+	VkSemaphore     acquired;
+
+	vk_ring_t staging, vertices, uniforms;
+
+	VkDescriptorPool pools[VK_MAX_POOLS];
+	int              num_pools, current_pool;
+
+	vk_dead_image_t dead[VK_MAX_DESTROY];
+	int             num_dead;
+} vk_frame_t;
+
+typedef struct
+{
+	VkInstance       instance;
+	VkSurfaceKHR     surface;
+	VkPhysicalDevice physical;
+	VkDevice         device;
+	VkQueue          queue;
+	uint32_t         family;
+	VkCommandPool    pool;
+	VkPhysicalDeviceLimits limits;
+	qboolean         anisotropy;
+
+	VkFormat        format, depth_format;
+	VkColorSpaceKHR colorspace;
+	VkRenderPass    pass_clear, pass_load; // the swapchain's: its first pass of a frame, and any after a break
+
+	VkSwapchainKHR  swapchain;
+	uint32_t        num_images;
+	VkImage         images[VK_MAX_SWAP];
+	VkImageView     views[VK_MAX_SWAP];
+	VkFramebuffer   framebuffers[VK_MAX_SWAP];
+	VkSemaphore     rendered[VK_MAX_SWAP]; // one per image: a present holds its semaphore until the image comes back
+	VkImage         depth;
+	VkImageView     depth_view;
+	vk_allocation_t depth_memory;
+	VkExtent2D      extent;
+	int             size_w, size_h; // the window size the swapchain was made for
+	int             vsync;
+	qboolean        rebuild;
+
+	vk_frame_t frames[VK_FRAMES];
+	uint       frame;
+	uint       serial;       // counts frames: what "used this frame" compares against
+	qboolean   cmd_open, upload_open, pass_open;
+	qboolean   skip;         // no image to draw on this frame
+	qboolean   acquired;
+	qboolean   started;      // this frame's image has had its first pass
+	uint32_t   image_index;
+	float      clear[3];
+
+	cvar_t *gl_vsync;
+} vk_t;
+
+extern vk_t vk;
+
+// r_vk_device.c
+qboolean R_VKCheck( VkResult result, const char *what );
+VkCommandBuffer R_VKCmd( void );
+VkCommandBuffer R_VKUploadCmd( void );
+qboolean R_VKEnsurePass( void ); // false: nothing to draw on this frame
+void R_VKEndPass( void );
+void R_VKFlushUploads( void );
+
+// r_vk_backend.c
+qboolean R_VKInitBackend( void );
+void R_VKShutdownBackend( void );
+void R_VKResetFrame( vk_frame_t *frame ); // its work has finished
+qboolean R_VKAllocImageMemory( VkImage image, vk_allocation_t *out );
+void R_VKFreeMemory( vk_allocation_t *allocation );
+void R_VKMarkStateDirty( void ); // a new command buffer has no dynamic state yet
 
 // the GL entry points, answering nothing, until each file's drawing has moved to the backend (r_vk_glstub.c)
 void R_VKInstallGLStubs( void );

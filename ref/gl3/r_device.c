@@ -15,6 +15,7 @@ GNU General Public License for more details.
 
 #include "r_local.h"
 #include "r_gl.h"
+#include "flashlight.glsl.h"
 
 #define GL3_DEFINE( type, name ) type p##name;
 GL3_FUNCTIONS( GL3_DEFINE )
@@ -85,7 +86,7 @@ void R_GL3DestroyDevice( void )
 void R_GL3Clear( byte r, byte g, byte b )
 {
 	glClearColor( r / 255.0f, g / 255.0f, b / 255.0f, 1.0f );
-	R_GL3ClearBuffers( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
+	R_GL3ClearBuffers( GL3_CLEAR_COLOR | GL3_CLEAR_DEPTH | GL3_CLEAR_STENCIL );
 }
 
 void R_GL3Present( void )
@@ -240,7 +241,7 @@ void R_GL3EnsureSceneTarget( void )
 	glBindFramebuffer( GL_FRAMEBUFFER, gl3_scene.fbo );
 	glViewport( 0, 0, gl3_scene.width, gl3_scene.height );
 	glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
-	R_GL3ClearBuffers( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
+	R_GL3ClearBuffers( GL3_CLEAR_COLOR | GL3_CLEAR_DEPTH | GL3_CLEAR_STENCIL );
 	gl3_scene.active = true;
 }
 
@@ -288,4 +289,478 @@ int R_GL3TakeSceneTarget( void )
 
 	gl3_scene.resolved = false;
 	return resolved ? gl3_scene.scene : 0;
+}
+
+/*
+==============================================================================
+
+THE PROGRAMS
+
+==============================================================================
+*/
+struct gl3_program_s
+{
+	char   name[32];
+	GLuint prog;
+	GLint  vsc, psc;             // the register arrays' locations, -1 when unused
+	int    vsc_count, psc_count; // and their sizes
+	uint   vsc_serial, psc_serial; // the shared registers' version it last took
+};
+
+#define GL3_MAX_PROGRAMS 32
+
+static gl3_program_t gl3_programs[GL3_MAX_PROGRAMS];
+static int           gl3_num_programs;
+static gl3_program_t *gl3_current_program;
+
+// what the shader files say about their resources, as GLSL 330 has it (the Vulkan backend has its own)
+static const char gl3_glsl_prelude[] =
+	"#define VS_REGISTERS( n ) uniform vec4 vsc[n];\n"
+	"#define PS_REGISTERS( n ) uniform vec4 psc[n];\n"
+	"#define SAMPLER( name, unit ) uniform sampler2D name;\n"
+	"#define ATTR( type, name, location ) in type name;\n"
+	"#define VK_FIX_CLIP()\n";
+
+static const char *gl3_attribs[GL3_ATTR_COUNT] =
+{
+	"a_position", "a_color", "a_texcoord", "a_lightcoord", "a_normal", "a_bone", "a_extra",
+};
+
+static const char *gl3_samplers[GL3_UNIT_COUNT] =
+{
+	"s_texture", "s_lightmap", "s_ripple", "s_cookie", "s_shadow", "s_gamma",
+};
+
+static GLuint R_GL3CompileStage( GLenum stage, const char *name, const char *defines, const char *source )
+{
+	const char *parts[5] =
+	{
+		"#version 330 core\n",
+		stage == GL_VERTEX_SHADER ? "#define VERTEX_SHADER 1\n" : "#define FRAGMENT_SHADER 1\n",
+		gl3_glsl_prelude,
+		defines ? defines : "",
+		source,
+	};
+	GLuint shader = glCreateShader( stage );
+	GLint ok = 0;
+
+	glShaderSource( shader, ARRAYSIZE( parts ), parts, NULL );
+	glCompileShader( shader );
+	glGetShaderiv( shader, GL_COMPILE_STATUS, &ok );
+
+	if( !ok )
+	{
+		char log[4096];
+
+		log[0] = '\0';
+		glGetShaderInfoLog( shader, sizeof( log ), NULL, log );
+		gEngfuncs.Con_Printf( S_ERROR "ref_gl3: %s (%s) %s shader:\n%s\n", name, defines ? defines : "",
+			stage == GL_VERTEX_SHADER ? "vertex" : "fragment", log );
+		glDeleteShader( shader );
+		return 0;
+	}
+
+	return shader;
+}
+
+/*
+==================
+R_GL3CreateProgram
+
+One shader file with its defines ("#define NAME 1\n" lines), linked; NULL with the compiler's words in the
+console when it fails.
+==================
+*/
+gl3_program_t *R_GL3CreateProgram( const char *name, const char *source, const char *defines )
+{
+	gl3_program_t *p;
+	GLuint vs, fs;
+	GLint ok = 0;
+
+	if( gl3_num_programs >= GL3_MAX_PROGRAMS )
+	{
+		gEngfuncs.Con_Printf( S_ERROR "ref_gl3: more than %d programs\n", GL3_MAX_PROGRAMS );
+		return NULL;
+	}
+
+	vs = R_GL3CompileStage( GL_VERTEX_SHADER, name, defines, source );
+	fs = R_GL3CompileStage( GL_FRAGMENT_SHADER, name, defines, source );
+	if( !vs || !fs )
+	{
+		if( vs ) glDeleteShader( vs );
+		if( fs ) glDeleteShader( fs );
+		return NULL;
+	}
+
+	p = &gl3_programs[gl3_num_programs];
+	memset( p, 0, sizeof( *p ));
+	p->prog = glCreateProgram();
+	glAttachShader( p->prog, vs );
+	glAttachShader( p->prog, fs );
+
+	for( int i = 0; i < GL3_ATTR_COUNT; i++ )
+		glBindAttribLocation( p->prog, i, gl3_attribs[i] );
+	glBindFragDataLocation( p->prog, 0, "o_color" );
+
+	glLinkProgram( p->prog );
+	glDeleteShader( vs );
+	glDeleteShader( fs );
+	glGetProgramiv( p->prog, GL_LINK_STATUS, &ok );
+
+	if( !ok )
+	{
+		char log[4096];
+
+		log[0] = '\0';
+		glGetProgramInfoLog( p->prog, sizeof( log ), NULL, log );
+		gEngfuncs.Con_Printf( S_ERROR "ref_gl3: %s (%s) does not link:\n%s\n", name, defines ? defines : "", log );
+		glDeleteProgram( p->prog );
+		return NULL;
+	}
+
+	Q_strncpy( p->name, name, sizeof( p->name ));
+	p->vsc = glGetUniformLocation( p->prog, "vsc" );
+	p->psc = glGetUniformLocation( p->prog, "psc" );
+
+	// how many registers each array holds: the linker trims an array to the highest index the code reads
+	{
+		GLint count = 0, size = 0;
+		GLenum type;
+		char uname[64];
+
+		glGetProgramiv( p->prog, GL_ACTIVE_UNIFORMS, &count );
+		for( GLuint i = 0; i < (GLuint)count; i++ )
+		{
+			pglGetActiveUniform( p->prog, i, sizeof( uname ), NULL, &size, &type, uname );
+			if( !Q_strncmp( uname, "vsc", 3 ))
+				p->vsc_count = size;
+			else if( !Q_strncmp( uname, "psc", 3 ))
+				p->psc_count = size;
+		}
+	}
+
+	glUseProgram( p->prog );
+	for( int i = 0; i < GL3_UNIT_COUNT; i++ )
+	{
+		GLint loc = glGetUniformLocation( p->prog, gl3_samplers[i] );
+
+		if( loc >= 0 )
+			glUniform1i( loc, i );
+	}
+	glUseProgram( gl3_current_program ? gl3_current_program->prog : 0 );
+
+	gl3_num_programs++;
+	return p;
+}
+
+// a program with the flashlight's cone: its filter goes in front of the shader file
+gl3_program_t *R_GL3CreateSpotProgram( const char *name, const char *source, const char *defines )
+{
+	char prefix[8192];
+
+	Q_snprintf( prefix, sizeof( prefix ), "%s#define SPOT 1\n%s", defines ? defines : "", flashlight_glsl );
+	return R_GL3CreateProgram( name, source, prefix );
+}
+
+void R_GL3UseProgram( gl3_program_t *p )
+{
+	if( p == gl3_current_program )
+		return;
+
+	glUseProgram( p ? p->prog : 0 );
+	gl3_current_program = p;
+}
+
+// right before a draw: the current program takes the registers that changed since it last drew
+void R_GL3CommitConstants( void )
+{
+	gl3_program_t *p = gl3_current_program;
+
+	if( !p )
+		return;
+
+	if( p->vsc >= 0 && p->vsc_serial != gl3_vsc_serial )
+	{
+		glUniform4fv( p->vsc, p->vsc_count, gl3_vsc[0] );
+		p->vsc_serial = gl3_vsc_serial;
+	}
+
+	if( p->psc >= 0 && p->psc_serial != gl3_psc_serial )
+	{
+		glUniform4fv( p->psc, p->psc_count, gl3_psc[0] );
+		p->psc_serial = gl3_psc_serial;
+	}
+}
+
+void R_GL3ShutdownPrograms( void )
+{
+	R_GL3UseProgram( NULL );
+
+	for( int i = 0; i < gl3_num_programs; i++ )
+		glDeleteProgram( gl3_programs[i].prog );
+
+	memset( gl3_programs, 0, sizeof( gl3_programs ));
+	gl3_num_programs = 0;
+}
+
+/*
+==============================================================================
+
+THE TEXTURES
+
+==============================================================================
+*/
+// what each texture unit holds: GL3_UNIT_*
+static GLuint gl3_bound[GL3_UNIT_COUNT];
+static int    gl3_active_unit;
+
+static void R_GL3ActiveUnit( int unit )
+{
+	if( unit == gl3_active_unit )
+		return;
+
+	glActiveTexture( GL_TEXTURE0 + unit );
+	gl3_active_unit = unit;
+}
+
+void R_GL3BackendBindTexture( int unit, gl3_handle_t texture )
+{
+	if( gl3_bound[unit] == texture )
+		return;
+
+	R_GL3ActiveUnit( unit );
+	glBindTexture( GL_TEXTURE_2D, texture );
+	gl3_bound[unit] = texture;
+}
+
+// a deleted texture name may come back from glGenTextures for another texture: no unit may still claim it
+void R_GL3UnbindTexture( gl3_handle_t texture )
+{
+	if( !texture )
+		return;
+
+	for( int i = 0; i < GL3_UNIT_COUNT; i++ )
+	{
+		if( gl3_bound[i] == texture )
+			R_GL3BackendBindTexture( i, 0 );
+	}
+}
+
+// something bound textures behind the cache's back (a framebuffer's setup): every unit binds anew
+void R_GL3ForgetBindings( void )
+{
+	for( int i = 0; i < GL3_UNIT_COUNT; i++ )
+		gl3_bound[i] = (GLuint)-1;
+	gl3_active_unit = -1;
+}
+
+gl3_handle_t R_GL3BackendCreateTexture( int width, int height, int levels )
+{
+	GLuint texture = 0;
+
+	glGenTextures( 1, &texture );
+	R_GL3BackendBindTexture( 0, texture );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels - 1 );
+
+	// every level's storage first: the rows go in with glTexSubImage2D
+	for( int level = 0; level < levels; level++ )
+	{
+		glTexImage2D( GL_TEXTURE_2D, level, GL_RGBA8, Q_max( 1, width >> level ), Q_max( 1, height >> level ),
+			0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL );
+	}
+
+	return texture;
+}
+
+void R_GL3BackendDeleteTexture( gl3_handle_t texture )
+{
+	GLuint name = texture;
+
+	R_GL3UnbindTexture( texture );
+	glDeleteTextures( 1, &name );
+}
+
+static struct
+{
+	gl3_handle_t texture;
+	int          level, width, height;
+	uint32_t    *rows;
+	size_t       capacity;
+} gl3_lock;
+
+uint32_t *R_GL3BackendLockLevel( gl3_handle_t texture, int level, int width, int height )
+{
+	const size_t bytes = (size_t)width * height * sizeof( uint32_t );
+
+	if( bytes > gl3_lock.capacity )
+	{
+		gl3_lock.rows = (uint32_t *)Mem_Realloc( r_temppool, gl3_lock.rows, bytes );
+		gl3_lock.capacity = bytes;
+	}
+
+	gl3_lock.texture = texture;
+	gl3_lock.level = level;
+	gl3_lock.width = width;
+	gl3_lock.height = height;
+	return gl3_lock.rows;
+}
+
+// rows are 0xAARRGGBB: as GL_BGRA with GL_UNSIGNED_INT_8_8_8_8_REV that reads the same on either byte order
+void R_GL3BackendUnlockLevel( void )
+{
+	R_GL3BackendBindTexture( 0, gl3_lock.texture );
+	glTexSubImage2D( GL_TEXTURE_2D, gl3_lock.level, 0, 0, gl3_lock.width, gl3_lock.height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, gl3_lock.rows );
+}
+
+// sampler state lives on the texture object: the texture is bound to this unit by now
+void R_GL3BackendSetSampler( int unit, gl3_handle_t texture, int levels, qboolean filtered, qboolean clamp, int mipcap, int anisotropy )
+{
+	const GLenum mag = filtered ? GL_LINEAR : GL_NEAREST;
+	const GLenum min = levels > 1 ? ( filtered ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST ) : mag;
+	const GLenum wrap = clamp ? GL_CLAMP_TO_EDGE : GL_REPEAT;
+
+	R_GL3ActiveUnit( unit );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap );
+	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, (float)mipcap );
+
+	if( R_GL3BackendMaxAnisotropy( ) > 0.0f )
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, (float)Q_max( 1, anisotropy ));
+}
+
+// anisotropic filtering is an extension in 3.3, present in every driver that matters
+float R_GL3BackendMaxAnisotropy( void )
+{
+	static float maximum = -1.0f;
+	GLint count = 0;
+
+	if( maximum >= 0.0f )
+		return maximum;
+
+	maximum = 0.0f;
+	glGetIntegerv( GL_NUM_EXTENSIONS, &count );
+
+	for( int i = 0; i < count; i++ )
+	{
+		const char *ext = (const char *)glGetStringi( GL_EXTENSIONS, i );
+
+		if( ext && ( !Q_strcmp( ext, "GL_EXT_texture_filter_anisotropic" ) || !Q_strcmp( ext, "GL_ARB_texture_filter_anisotropic" )))
+		{
+			glGetFloatv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maximum );
+			break;
+		}
+	}
+
+	return maximum;
+}
+
+/*
+==============================================================================
+
+STATES AND THE STREAM
+
+==============================================================================
+*/
+void R_GL3BackendApplyStates( const gl3_states_t *w, const gl3_states_t *a )
+{
+	if( w->blend != a->blend )
+	{
+		if( w->blend ) glEnable( GL_BLEND );
+		else glDisable( GL_BLEND );
+	}
+	if( w->src != a->src || w->dst != a->dst )
+		glBlendFunc( w->src, w->dst );
+	if( w->zwrite != a->zwrite )
+		glDepthMask( w->zwrite ? GL_TRUE : GL_FALSE );
+	if( w->ztest != a->ztest )
+	{
+		if( w->ztest ) glEnable( GL_DEPTH_TEST );
+		else glDisable( GL_DEPTH_TEST );
+	}
+	if( w->zfunc != a->zfunc )
+		glDepthFunc( w->zfunc );
+	if( w->cull != a->cull )
+	{
+		if( w->cull == GL3_CULL_NONE )
+			glDisable( GL_CULL_FACE );
+		else
+		{
+			glEnable( GL_CULL_FACE );
+			glCullFace( w->cull );
+		}
+	}
+	if( w->depthbias != a->depthbias || w->slopebias != a->slopebias )
+	{
+		// the bias is kept in the depth buffer's own units (glPolygonOffset units / 2^24)
+		if( w->depthbias == 0.0f && w->slopebias == 0.0f )
+			glDisable( GL_POLYGON_OFFSET_FILL );
+		else
+		{
+			glEnable( GL_POLYGON_OFFSET_FILL );
+			glPolygonOffset( w->slopebias, w->depthbias * 16777216.0f );
+		}
+	}
+}
+
+void R_GL3BackendClearBuffers( uint mask )
+{
+	glDepthMask( GL_TRUE );
+	glClearDepth( 1.0 );
+	glClearStencil( 0 );
+	glClear( mask );
+}
+
+void R_GL3BackendViewport( int x, int y, int width, int height )
+{
+	glViewport( x, y, width, height );
+}
+
+void R_GL3BackendDepthRange( float minz, float maxz )
+{
+	glDepthRange( minz, maxz );
+}
+
+static GLuint gl3_draw_vao, gl3_draw_vbo;
+
+void R_GL3BackendInitDraw( void )
+{
+	glGenVertexArrays( 1, &gl3_draw_vao );
+	glGenBuffers( 1, &gl3_draw_vbo );
+	glBindVertexArray( gl3_draw_vao );
+	glBindBuffer( GL_ARRAY_BUFFER, gl3_draw_vbo );
+	glEnableVertexAttribArray( GL3_ATTR_POSITION );
+	glVertexAttribPointer( GL3_ATTR_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof( gl3_vertex_t ), (void *)offsetof( gl3_vertex_t, position ));
+	glEnableVertexAttribArray( GL3_ATTR_COLOR );
+	glVertexAttribPointer( GL3_ATTR_COLOR, GL_BGRA, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( gl3_vertex_t ), (void *)offsetof( gl3_vertex_t, color ));
+	glEnableVertexAttribArray( GL3_ATTR_TEXCOORD );
+	glVertexAttribPointer( GL3_ATTR_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof( gl3_vertex_t ), (void *)offsetof( gl3_vertex_t, texcoord ));
+}
+
+void R_GL3BackendShutdownDraw( void )
+{
+	if( gl3_draw_vbo )
+		glDeleteBuffers( 1, &gl3_draw_vbo );
+	if( gl3_draw_vao )
+		glDeleteVertexArrays( 1, &gl3_draw_vao );
+	gl3_draw_vbo = gl3_draw_vao = 0;
+}
+
+void R_GL3BackendUseDrawLayout( void )
+{
+	glBindVertexArray( gl3_draw_vao );
+	glBindBuffer( GL_ARRAY_BUFFER, gl3_draw_vbo );
+}
+
+// count vertices of the given primitive from data, through the stream buffer
+void R_GL3BackendDrawStream( int primitive, const gl3_vertex_t *vertices, int count )
+{
+	const GLsizeiptr bytes = count * sizeof( *vertices );
+
+	// a new store each time: the driver hands out fresh memory instead of waiting for the last draw
+	glBufferData( GL_ARRAY_BUFFER, bytes, NULL, GL_STREAM_DRAW );
+	glBufferSubData( GL_ARRAY_BUFFER, 0, bytes, vertices );
+	R_GL3CommitConstants();
+	glDrawArrays( primitive, 0, count );
 }

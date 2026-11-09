@@ -21,7 +21,6 @@ what they expect from WorldToScreen and GetMatrix, and they go to the GPU as the
 */
 
 #include "r_local.h"
-#include "r_gl.h"
 #include "entity_types.h"
 
 gl3_view_t    gl3_ri;
@@ -36,7 +35,7 @@ static struct
 static void R_GL3ApplyViewport( int x, int y, int width, int height )
 {
 	R_GL3DrawReset();
-	glViewport( x, gpGlobals->height - y - height, width, height );
+	R_GL3BackendViewport( x, gpGlobals->height - y - height, width, height );
 }
 
 /*
@@ -496,8 +495,8 @@ static void R_GL3SetupView( void )
 	gl3_viewport.height = Q_min( gpGlobals->height - gl3_viewport.y, vp[3] );
 
 	R_GL3ApplyViewport( gl3_viewport.x, gl3_viewport.y, gl3_viewport.width, gl3_viewport.height );
-	glDepthRange( 0.0, 1.0 );
-	R_GL3ClearBuffers( GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
+	R_GL3BackendDepthRange( 0.0f, 1.0f );
+	R_GL3ClearBuffers( GL3_CLEAR_DEPTH | GL3_CLEAR_STENCIL );
 
 	R_GL3SetupMatrices();
 
@@ -628,13 +627,13 @@ void R_GL3CheckFog( void )
 void R_GL3SetDepthRange( float minz, float maxz )
 {
 	R_GL3DrawReset();
-	glDepthRange( minz, maxz );
+	R_GL3BackendDepthRange( minz, maxz );
 }
 
 void R_GL3RestoreViewport( void )
 {
 	R_GL3ApplyViewport( 0, 0, gpGlobals->width, gpGlobals->height );
-	glDepthRange( 0.0, 1.0 );
+	R_GL3BackendDepthRange( 0.0f, 1.0f );
 }
 
 // what an off-screen pass leaves behind: the viewport of the view being drawn, not the whole screen

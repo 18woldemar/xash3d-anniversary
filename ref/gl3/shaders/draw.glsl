@@ -5,11 +5,11 @@
 // Defines: WARP_SCREEN, the software renderer's 320x200 grid under water; WARP_WAVE, ours.
 
 #ifdef VERTEX_SHADER
-uniform vec4 vsc[5]; // 0..3 the transform's rows, 4 the eye plane
+VS_REGISTERS( 5 ) // 0..3 the transform's rows, 4 the eye plane
 
-in vec4 a_position;
-in vec4 a_color;
-in vec2 a_texcoord;
+ATTR( vec4, a_position, 0 )
+ATTR( vec4, a_color, 1 )
+ATTR( vec2, a_texcoord, 2 )
 
 out vec4 v_color;
 out vec2 v_texcoord;
@@ -18,6 +18,7 @@ out float v_fogz;
 void main()
 {
 	gl_Position = vec4( dot( vsc[0], a_position ), dot( vsc[1], a_position ), dot( vsc[2], a_position ), dot( vsc[3], a_position ));
+	VK_FIX_CLIP();
 	v_color = a_color;
 	v_texcoord = a_texcoord;
 	v_fogz = dot( vsc[4], a_position );
@@ -25,8 +26,8 @@ void main()
 #endif
 
 #ifdef FRAGMENT_SHADER
-uniform vec4 psc[32]; // 0 fog: rgb colour, a 1 / fog end (0: none); 1 the warp: xy buffer size, z clock; 31 x alpha reference
-uniform sampler2D s_texture;
+PS_REGISTERS( 32 ) // 0 fog: rgb colour, a 1 / fog end (0: none); 1 the warp: xy buffer size, z clock; 31 x alpha reference
+SAMPLER( s_texture, 0 )
 
 in vec4 v_color;
 in vec2 v_texcoord;

@@ -24,7 +24,6 @@ and binding is a single call.
 */
 
 #include "r_local.h"
-#include "r_gl.h"
 
 #define GL3_MAX_TEXTURE_SIZE 4096
 #define GL3_TEXTURES_HASH_SIZE ( GL3_MAX_TEXTURES >> 2 )
@@ -41,11 +40,6 @@ static int gl3_num_textures; // one past the highest slot in use
 
 int gl3_white_texture;
 int gl3_particle_texture;
-// what each texture unit holds: 0 the diffuse, 1 the lightmap, 2 the ripple field, 3 the flashlight's cookie,
-// 4 its shadow map
-#define GL3_TEXTURE_UNITS 5
-static GLuint  gl3_bound[GL3_TEXTURE_UNITS];
-static int     gl3_active_unit;
 static cvar_t *gl_anisotropy;
 static float   gl3_max_anisotropy; // 0: the driver has no anisotropic filtering
 static cvar_t *gl_texture_nearest;
@@ -216,53 +210,12 @@ static int R_GL3MipCount( int width, int height )
 	return count;
 }
 
-static void R_GL3ActiveUnit( int unit )
-{
-	if( unit == gl3_active_unit )
-		return;
-
-	glActiveTexture( GL_TEXTURE0 + unit );
-	gl3_active_unit = unit;
-}
-
-static void R_GL3BindUnit( int unit, GLuint glnum )
-{
-	if( gl3_bound[unit] == glnum )
-		return;
-
-	R_GL3ActiveUnit( unit );
-	glBindTexture( GL_TEXTURE_2D, glnum );
-	gl3_bound[unit] = glnum;
-}
-
-// a deleted texture name may come back from glGenTextures for another texture: no unit may still claim it
-void R_GL3UnbindTexture( GLuint glnum )
-{
-	if( !glnum )
-		return;
-
-	for( int i = 0; i < GL3_TEXTURE_UNITS; i++ )
-	{
-		if( gl3_bound[i] == glnum )
-			R_GL3BindUnit( i, 0 );
-	}
-}
-
-// something bound textures behind the cache's back (a framebuffer's setup): every unit binds anew
-void R_GL3ForgetBindings( void )
-{
-	for( int i = 0; i < GL3_TEXTURE_UNITS; i++ )
-		gl3_bound[i] = (GLuint)-1;
-	gl3_active_unit = -1;
-}
-
 static void R_GL3ReleaseTexture( gl3_texture_t *tex )
 {
 	if( !tex->glnum )
 		return;
 
-	R_GL3UnbindTexture( tex->glnum );
-	glDeleteTextures( 1, &tex->glnum );
+	R_GL3BackendDeleteTexture( tex->glnum );
 	tex->glnum = 0;
 	memset( tex->applied, 0, sizeof( tex->applied ));
 }
@@ -283,16 +236,19 @@ static void R_GL3Row( const byte *src, int width, pixformat_t type, qboolean opa
 static qboolean R_GL3WriteLevel( gl3_texture_t *tex, int level, const byte *src, int width, int height, pixformat_t type, qboolean opaque )
 {
 	int bpp = R_GL3BytesPerPixel( type );
+	uint32_t *out = R_GL3BackendLockLevel( tex->glnum, level, width, height );
 
-	for( int y = 0; y < height; y++ )
+	for( int y = 0; y < height; y++, out += width )
 	{
 		if( src )
+		{
 			R_GL3Row( src + y * width * bpp, width, type, opaque );
-		else memset( gl3_row, 0, width * sizeof( *gl3_row ));
-
-		glTexSubImage2D( GL_TEXTURE_2D, level, 0, y, width, 1, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, gl3_row );
+			memcpy( out, gl3_row, width * sizeof( *gl3_row ));
+		}
+		else memset( out, 0, width * sizeof( *gl3_row ));
 	}
 
+	R_GL3BackendUnlockLevel();
 	return true;
 }
 
@@ -333,19 +289,7 @@ static qboolean R_GL3Upload( gl3_texture_t *tex, rgbdata_t *pic )
 		R_GL3ReleaseTexture( tex );
 
 	if( !tex->glnum )
-	{
-		glGenTextures( 1, &tex->glnum );
-		R_GL3BindUnit( 0, tex->glnum );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels - 1 );
-
-		// every level's storage first: the rows go in with glTexSubImage2D
-		for( int level = 0; level < levels; level++ )
-		{
-			glTexImage2D( GL_TEXTURE_2D, level, GL_RGBA8, Q_max( 1, width >> level ), Q_max( 1, height >> level ),
-				0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL );
-		}
-	}
-	else R_GL3BindUnit( 0, tex->glnum );
+		tex->glnum = R_GL3BackendCreateTexture( width, height, levels );
 
 	tex->srcWidth = tex->width = width;
 	tex->srcHeight = tex->height = height;
@@ -510,7 +454,7 @@ static gl3_texture_t *R_GL3AllocTexture( const char *name, uint flags )
 }
 
 // a slot for a texture made elsewhere (the scene target); freeing the slot deletes it
-int R_GL3WrapTexture( const char *name, GLuint glnum, int width, int height, uint flags )
+int R_GL3WrapTexture( const char *name, gl3_handle_t glnum, int width, int height, uint flags )
 {
 	gl3_texture_t *tex = R_GL3AllocTexture( name, flags );
 
@@ -804,43 +748,18 @@ static qboolean R_GL3Filtered( const gl3_texture_t *tex )
 ==================
 R_GL3ApplySampler
 
-Filtering, addressing and the mip cap of the texture bound to the active unit, set only when they differ
+Filtering, addressing and the mip cap of the texture, set only when they differ
 from what the texture object already holds.
 ==================
 */
-static void R_GL3ApplySampler( gl3_texture_t *tex, qboolean filtered, qboolean clamp, int mipcap, int anisotropy )
+static void R_GL3ApplySampler( int unit, gl3_texture_t *tex, qboolean filtered, qboolean clamp, int mipcap, int anisotropy )
 {
 	const byte want[4] = { (byte)( filtered + 1 ), (byte)( clamp + 1 ), (byte)( mipcap + 1 ), (byte)( anisotropy + 1 ) };
 
 	if( !memcmp( tex->applied, want, sizeof( want )))
 		return;
 
-	if( tex->applied[0] != want[0] )
-	{
-		const GLenum mag = filtered ? GL_LINEAR : GL_NEAREST;
-		GLenum min = mag;
-
-		if( tex->numMips > 1 )
-			min = filtered ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
-
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min );
-	}
-
-	if( tex->applied[1] != want[1] )
-	{
-		const GLenum wrap = clamp ? GL_CLAMP_TO_EDGE : GL_REPEAT;
-
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap );
-	}
-
-	if( tex->applied[2] != want[2] )
-		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, (float)mipcap );
-
-	if( tex->applied[3] != want[3] && gl3_max_anisotropy > 0.0f )
-		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, (float)Q_max( 1, anisotropy ));
-
+	R_GL3BackendSetSampler( unit, tex->glnum, tex->numMips, filtered, clamp, mipcap, anisotropy );
 	memcpy( tex->applied, want, sizeof( want ));
 }
 
@@ -871,24 +790,23 @@ void R_GL3BindTexture( int texnum )
 	if( tex->numMips > 1 && filtered && gl3_max_anisotropy > 0.0f )
 		anisotropy = (int)bound( 1.0f, gl_anisotropy->value, gl3_max_anisotropy );
 
-	R_GL3BindUnit( 0, tex->glnum );
-	R_GL3ActiveUnit( 0 );
-	R_GL3ApplySampler( tex, filtered, FBitSet( tex->flags, TF_CLAMP | TF_BORDER ) ? true : false, mipcap, anisotropy );
+	R_GL3BackendBindTexture( 0, tex->glnum );
+	R_GL3ApplySampler( 0, tex, filtered, FBitSet( tex->flags, TF_CLAMP | TF_BORDER ) ? true : false, mipcap, anisotropy );
 }
 
 // unit 1: lightmaps, filtered, clamped, one level (0: *white)
-void R_GL3BindLightmap( GLuint glnum )
+void R_GL3BindLightmap( gl3_handle_t glnum )
 {
 	if( !glnum )
 		glnum = gl3_textures[gl3_white_texture].glnum;
 
-	R_GL3BindUnit( 1, glnum );
+	R_GL3BackendBindTexture( GL3_UNIT_LIGHTMAP, glnum );
 }
 
 // the studio shader's gamma tables: integers, read with texelFetch
-void R_GL3BindGamma( GLuint glnum )
+void R_GL3BindGamma( gl3_handle_t glnum )
 {
-	R_GL3BindUnit( GL3_UNIT_GAMMA, glnum );
+	R_GL3BackendBindTexture( GL3_UNIT_GAMMA, glnum );
 }
 
 // an extra unit's texture with its own sampling
@@ -896,9 +814,8 @@ static void R_GL3BindExtra( int unit, int texnum, qboolean filtered, qboolean cl
 {
 	gl3_texture_t *tex = R_GL3GetTexture( texnum );
 
-	R_GL3BindUnit( unit, tex->glnum );
-	R_GL3ActiveUnit( unit );
-	R_GL3ApplySampler( tex, filtered, clamp, 15, 1 );
+	R_GL3BackendBindTexture( unit, tex->glnum );
+	R_GL3ApplySampler( unit, tex, filtered, clamp, 15, 1 );
 }
 
 // unit 2: the ripple field of the software water, tiled. The span renderer read one value per cell,
@@ -962,27 +879,8 @@ void R_GL3InitImages( void )
 	gl3_image_pool = Mem_AllocPool( "ref_gl3 images" );
 	gl_anisotropy = gEngfuncs.Cvar_Get( "gl_anisotropy", "8", FCVAR_ARCHIVE, "textures anisotropic filter" );
 	gl_texture_nearest = gEngfuncs.Cvar_Get( "gl_texture_nearest", "0", FCVAR_ARCHIVE, "disable texture filter" );
-	memset( gl3_bound, 0, sizeof( gl3_bound ));
-	gl3_active_unit = -1;
-	R_GL3ActiveUnit( 0 );
-
-	// anisotropic filtering is an extension in 3.3, present in every driver that matters
-	gl3_max_anisotropy = 0.0f;
-	{
-		GLint count = 0;
-
-		glGetIntegerv( GL_NUM_EXTENSIONS, &count );
-		for( int i = 0; i < count; i++ )
-		{
-			const char *ext = (const char *)glGetStringi( GL_EXTENSIONS, i );
-
-			if( ext && ( !Q_strcmp( ext, "GL_EXT_texture_filter_anisotropic" ) || !Q_strcmp( ext, "GL_ARB_texture_filter_anisotropic" )))
-			{
-				glGetFloatv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &gl3_max_anisotropy );
-				break;
-			}
-		}
-	}
+	R_GL3ForgetBindings();
+	gl3_max_anisotropy = R_GL3BackendMaxAnisotropy();
 
 	gEngfuncs.Cmd_AddCommand( "r_texstats", R_GL3TextureStats_f, "log the number and memory of textures; with any argument, every texture" );
 }

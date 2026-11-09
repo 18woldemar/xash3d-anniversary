@@ -33,7 +33,8 @@ static intptr_t R_VKGLNothing( void )
 GL3_FUNCTIONS( GL3_DEFINE )
 #undef GL3_DEFINE
 
-static GLuint vk_gl_names;
+// far above the backend's own texture numbers
+static GLuint vk_gl_names = 1u << 20;
 
 static void APIENTRY R_VKGLGen( GLsizei n, GLuint *names )
 {

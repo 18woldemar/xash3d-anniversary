@@ -579,7 +579,7 @@ def configure(conf):
 	for refdll in REFDLLS:
 		refdll.register_env(conf.env, conf.options, conf.options.ALL_RENDERERS)
 
-	if conf.env.VK and not conf.check_cc(header_name='vulkan/vulkan.h', mandatory=False):
+	if conf.env.VK and not ( conf.check_cc(header_name='vulkan/vulkan.h', mandatory=False) and conf.find_program('glslangValidator', var='GLSLANG', mandatory=False) ):
 		conf.env.VK = False
 
 	conf.env.GAMEDIR = conf.options.GAMEDIR

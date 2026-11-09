@@ -222,7 +222,7 @@ void R_GL3FlashlightShadow( int first, int last )
 	glViewport( 0, 0, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE );
 	glDepthRange( 0.0, 1.0 );
 	glClearColor( 1.0f, 1.0f, 1.0f, 1.0f );
-	R_GL3ClearBuffers( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+	R_GL3ClearBuffers( GL3_CLEAR_COLOR | GL3_CLEAR_DEPTH );
 	R_GL3SetPSConstants( 0, range, 1 );
 
 	// both sides cast: a one-sided pass would let the light through the back of thin geometry

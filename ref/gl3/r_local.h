@@ -64,6 +64,21 @@ typedef uint gl3_handle_t;
 #define GL3_DEPTH_EQUAL  0x0202
 #define GL3_DEPTH_LEQUAL 0x0203
 
+#define GL3_CLEAR_DEPTH   0x0100
+#define GL3_CLEAR_STENCIL 0x0400
+#define GL3_CLEAR_COLOR   0x4000
+
+#define GL3_PRIM_LINES     1
+#define GL3_PRIM_TRIANGLES 4
+
+// the vertex of 2D and the triangle API, drawn through the backend's stream buffer
+typedef struct
+{
+	float    position[3];
+	uint32_t color; // 0xAARRGGBB
+	float    texcoord[2];
+} gl3_vertex_t;
+
 typedef struct gl3_texture_s
 {
 	char        name[256]; // game path with extension, or an image program
@@ -292,14 +307,11 @@ enum
 	GL3_UNIT_COUNT
 };
 
-typedef struct
-{
-	char   name[32];
-	gl3_handle_t prog;
-	int    vsc, psc;             // the register arrays' locations, -1 when unused
-	int    vsc_count, psc_count; // and their sizes
-	uint   vsc_serial, psc_serial; // the shared registers' version it last took
-} gl3_program_t;
+typedef struct gl3_program_s gl3_program_t;
+
+extern float gl3_vsc[GL3_VS_CONSTANTS][4];
+extern float gl3_psc[GL3_PS_CONSTANTS][4];
+extern uint  gl3_vsc_serial, gl3_psc_serial;
 
 gl3_program_t *R_GL3CreateProgram( const char *name, const char *source, const char *defines );
 gl3_program_t *R_GL3CreateSpotProgram( const char *name, const char *source, const char *defines );
@@ -534,6 +546,23 @@ gl3_handle_t R_GL3LightmapTexture( int page );
 //
 // r_device.c
 //
+// What each backend answers (GL: r_device.c, Vulkan: ref/vk). A viewport's y is from the bottom, as in GL.
+gl3_handle_t R_GL3BackendCreateTexture( int width, int height, int levels ); // 8 bit BGRA, every level's storage
+void R_GL3BackendDeleteTexture( gl3_handle_t texture );
+uint32_t *R_GL3BackendLockLevel( gl3_handle_t texture, int level, int width, int height ); // rows of 0xAARRGGBB, tightly packed
+void R_GL3BackendUnlockLevel( void );
+void R_GL3BackendBindTexture( int unit, gl3_handle_t texture );
+void R_GL3BackendSetSampler( int unit, gl3_handle_t texture, int levels, qboolean filtered, qboolean clamp, int mipcap, int anisotropy );
+float R_GL3BackendMaxAnisotropy( void ); // 0: none
+void R_GL3BackendApplyStates( const gl3_states_t *wanted, const gl3_states_t *applied );
+void R_GL3BackendClearBuffers( uint mask ); // GL3_CLEAR_*
+void R_GL3BackendViewport( int x, int y, int width, int height );
+void R_GL3BackendDepthRange( float minz, float maxz );
+void R_GL3BackendInitDraw( void );
+void R_GL3BackendShutdownDraw( void );
+void R_GL3BackendUseDrawLayout( void );
+void R_GL3BackendDrawStream( int primitive, const gl3_vertex_t *vertices, int count ); // GL3_PRIM_*
+
 qboolean R_GL3CreateDevice( int width, int height );
 void R_GL3DestroyDevice( void );
 void R_GL3Clear( byte r, byte g, byte b );

@@ -23,15 +23,7 @@ draw.glsl multiplies the texture by the vertex colour, and untextured draws use 
 */
 
 #include "r_local.h"
-#include "r_gl.h"
 #include "draw.glsl.h"
-
-typedef struct
-{
-	float    position[3];
-	uint32_t color; // 0xAARRGGBB, read as GL_BGRA
-	float    texcoord[2];
-} gl3_vertex_t;
 
 #define GL3_MAX_BATCH 8192 // vertices, a multiple of 3
 #define GL3_MAX_PRIM  4096 // vertices between Begin and End
@@ -39,7 +31,6 @@ typedef struct
 static gl3_program_t *gl3_draw_prog;
 static gl3_program_t *gl3_warpscreen_prog;
 static gl3_program_t *gl3_warpwave_prog;
-static GLuint gl3_draw_vao, gl3_draw_vbo;
 static int gl3_draw_warpscreen; // the scene quad under water: 0 none, 1 the software grid, 2 our waves
 static qboolean gl3_draw_program; // the draw program, its buffers and its registers are set
 static float    gl3_transform[16]; // rows of the object-to-clip matrix
@@ -78,50 +69,13 @@ void R_GL3ApplyStates( void )
 	const gl3_states_t *w = &gl3_wanted;
 	gl3_states_t *a = &gl3_applied;
 
-	if( w->blend != a->blend )
-	{
-		if( w->blend ) glEnable( GL_BLEND );
-		else glDisable( GL_BLEND );
-	}
-	if( w->src != a->src || w->dst != a->dst )
-		glBlendFunc( w->src, w->dst );
 	if( w->alphatest != a->alphatest || w->alpharef != a->alpharef )
 	{
 		const float ref[4] = { w->alphatest ? (float)w->alpharef : -1.0f, 0.0f, 0.0f, 0.0f };
 
 		R_GL3SetPSConstants( GL3_PS_ALPHAREF, ref, 1 );
 	}
-	if( w->zwrite != a->zwrite )
-		glDepthMask( w->zwrite ? GL_TRUE : GL_FALSE );
-	if( w->ztest != a->ztest )
-	{
-		if( w->ztest ) glEnable( GL_DEPTH_TEST );
-		else glDisable( GL_DEPTH_TEST );
-	}
-	if( w->zfunc != a->zfunc )
-		glDepthFunc( w->zfunc );
-	if( w->cull != a->cull )
-	{
-		if( w->cull == GL3_CULL_NONE )
-			glDisable( GL_CULL_FACE );
-		else
-		{
-			glEnable( GL_CULL_FACE );
-			glCullFace( w->cull );
-		}
-	}
-	if( w->depthbias != a->depthbias || w->slopebias != a->slopebias )
-	{
-		// the bias is kept in the depth buffer's own units (glPolygonOffset units / 2^24)
-		if( w->depthbias == 0.0f && w->slopebias == 0.0f )
-			glDisable( GL_POLYGON_OFFSET_FILL );
-		else
-		{
-			glEnable( GL_POLYGON_OFFSET_FILL );
-			glPolygonOffset( w->slopebias, w->depthbias * 16777216.0f );
-		}
-	}
-
+	R_GL3BackendApplyStates( w, a );
 	*a = *w;
 }
 
@@ -132,24 +86,11 @@ static void R_GL3UseDrawProgram( void )
 
 	R_GL3UseProgram( gl3_draw_warpscreen == 2 ? gl3_warpwave_prog :
 		gl3_draw_warpscreen == 1 ? gl3_warpscreen_prog : gl3_draw_prog );
-	glBindVertexArray( gl3_draw_vao );
-	glBindBuffer( GL_ARRAY_BUFFER, gl3_draw_vbo );
+	R_GL3BackendUseDrawLayout();
 	R_GL3SetVSConstants( 0, gl3_transform, 4 );
 	R_GL3SetVSConstants( 4, gl3_draw_eyeplane, 1 );
 	R_GL3SetPSConstants( 0, gl3_draw_fog, 1 );
 	gl3_draw_program = true;
-}
-
-// count vertices of the given primitive from data, through the stream buffer
-static void R_GL3DrawStream( GLenum mode, const gl3_vertex_t *data, int count )
-{
-	const GLsizeiptr bytes = count * sizeof( *data );
-
-	// a new store each time: the driver hands out fresh memory instead of waiting for the last draw
-	glBufferData( GL_ARRAY_BUFFER, bytes, NULL, GL_STREAM_DRAW );
-	glBufferSubData( GL_ARRAY_BUFFER, 0, bytes, data );
-	R_GL3CommitConstants();
-	glDrawArrays( mode, 0, count );
 }
 
 static void R_GL3Flush( void )
@@ -159,7 +100,7 @@ static void R_GL3Flush( void )
 
 	R_GL3UseDrawProgram();
 	R_GL3BindTexture( gl3_batch_texture );
-	R_GL3DrawStream( GL_TRIANGLES, gl3_batch, gl3_batch_count );
+	R_GL3BackendDrawStream( GL3_PRIM_TRIANGLES, gl3_batch, gl3_batch_count );
 	gl3_draws++;
 	gl3_vertices += gl3_batch_count;
 	gl3_batch_count = 0;
@@ -249,11 +190,8 @@ void R_GL3EffectFog( qboolean allow )
 // a clear writes depth only through an open mask, so the state cache is told that it was opened
 void R_GL3ClearBuffers( uint mask )
 {
-	glDepthMask( GL_TRUE );
+	R_GL3BackendClearBuffers( mask );
 	gl3_applied.zwrite = true;
-	glClearDepth( 1.0 );
-	glClearStencil( 0 );
-	glClear( mask );
 }
 
 // someone else is about to draw: draw what is batched, set everything again next time
@@ -295,16 +233,7 @@ qboolean R_GL3InitDraw( void )
 		return false;
 	}
 
-	glGenVertexArrays( 1, &gl3_draw_vao );
-	glGenBuffers( 1, &gl3_draw_vbo );
-	glBindVertexArray( gl3_draw_vao );
-	glBindBuffer( GL_ARRAY_BUFFER, gl3_draw_vbo );
-	glEnableVertexAttribArray( GL3_ATTR_POSITION );
-	glVertexAttribPointer( GL3_ATTR_POSITION, 3, GL_FLOAT, GL_FALSE, sizeof( gl3_vertex_t ), (void *)offsetof( gl3_vertex_t, position ));
-	glEnableVertexAttribArray( GL3_ATTR_COLOR );
-	glVertexAttribPointer( GL3_ATTR_COLOR, GL_BGRA, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( gl3_vertex_t ), (void *)offsetof( gl3_vertex_t, color ));
-	glEnableVertexAttribArray( GL3_ATTR_TEXCOORD );
-	glVertexAttribPointer( GL3_ATTR_TEXCOORD, 2, GL_FLOAT, GL_FALSE, sizeof( gl3_vertex_t ), (void *)offsetof( gl3_vertex_t, texcoord ));
+	R_GL3BackendInitDraw();
 
 	R_GL3UseDrawProgram();
 
@@ -337,11 +266,7 @@ void R_GL3ShutdownDraw( void )
 	gl3_batch_count = 0;
 	gl3_draw_program = false;
 
-	if( gl3_draw_vbo )
-		glDeleteBuffers( 1, &gl3_draw_vbo );
-	if( gl3_draw_vao )
-		glDeleteVertexArrays( 1, &gl3_draw_vao );
-	gl3_draw_vbo = gl3_draw_vao = 0;
+	R_GL3BackendShutdownDraw();
 	gl3_draw_prog = gl3_warpscreen_prog = gl3_warpwave_prog = NULL;
 }
 
@@ -619,7 +544,7 @@ static void R_GL3Lines( void )
 	R_GL3ApplyStates();
 	R_GL3UseDrawProgram();
 	R_GL3BindTexture( gl3_texture );
-	R_GL3DrawStream( GL_LINES, gl3_prim, count );
+	R_GL3BackendDrawStream( GL3_PRIM_LINES, gl3_prim, count );
 	gl3_draws++;
 	gl3_vertices += count;
 }
