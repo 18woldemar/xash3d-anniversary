@@ -104,6 +104,30 @@ void Posix_SetupSigtermHandling( void )
 #endif
 }
 
+// The client cannot shut down inside a signal handler (the renderer, the sound), so the handler only notes
+// the signal and Host_Frame quits. Without it SDL turns SIGTERM into a quit event, and in a game that only
+// opens the quit dialog: the process goes on running, and a launcher or a session ends a game with SIGTERM.
+static volatile sig_atomic_t posix_sigterm;
+
+static void Posix_SigtermNoteCallback( int signal )
+{
+	posix_sigterm = signal;
+}
+
+void Posix_SetupSigtermNote( void )
+{
+#if !XASH_PSVITA
+	struct sigaction act = { 0 };
+	act.sa_handler = Posix_SigtermNoteCallback;
+	sigaction( SIGTERM, &act, NULL ); // before SDL_Init: SDL leaves a handler that is already set alone
+#endif
+}
+
+qboolean Posix_SigtermCaught( void )
+{
+	return posix_sigterm != 0;
+}
+
 #if XASH_TIMER == TIMER_POSIX
 double Platform_DoubleTime( void )
 {

@@ -80,6 +80,8 @@ qboolean Platform_CheckLibraryDirectDependency( const byte *data, size_t size, c
 double Posix_GetCPUTime( void );
 void Posix_Daemonize( void );
 void Posix_SetupSigtermHandling( void );
+void Posix_SetupSigtermNote( void );
+qboolean Posix_SigtermCaught( void );
 char *Posix_Input( void );
 void Posix_InitConsole( void );
 void Posix_ShutdownConsole( void );
@@ -273,6 +275,22 @@ static inline void Platform_SetupSigtermHandling( void )
 {
 #if XASH_POSIX
 	Posix_SetupSigtermHandling( );
+#endif
+}
+
+static inline void Platform_SetupSigtermNote( void )
+{
+#if XASH_POSIX
+	Posix_SetupSigtermNote( );
+#endif
+}
+
+static inline qboolean Platform_SigtermCaught( void )
+{
+#if XASH_POSIX
+	return Posix_SigtermCaught( );
+#else
+	return false;
 #endif
 }
 

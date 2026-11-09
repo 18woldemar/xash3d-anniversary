@@ -721,6 +721,9 @@ Host_Frame
 */
 void Host_Frame( double time )
 {
+	if( Platform_SigtermCaught( ))
+		Sys_Quit( "caught SIGTERM" );
+
 	// decide the simulation time
 	if( !Host_FilterTime( time ))
 		return;
@@ -1182,6 +1185,8 @@ static void Host_InitCommon( int argc, char **argv, const char *progname, qboole
 
 #if XASH_DEDICATED
 	Platform_SetupSigtermHandling();
+#else
+	Platform_SetupSigtermNote();
 #endif
 	Platform_Init( Host_IsDedicated( ) || developer >= DEV_EXTENDED );
 	FS_Init();
