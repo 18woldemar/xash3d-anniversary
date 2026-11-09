@@ -57,8 +57,8 @@ void R_GL3DrawParticles( double frametime, particle_t *cl_active_particles, floa
 	palette = (const color24 *)ENGINE_GET_PARM( PARM_GET_PALETTE_PTR );
 
 	gl3_wanted.blend = true;
-	gl3_wanted.src = GL_SRC_ALPHA;
-	gl3_wanted.dst = GL_ONE_MINUS_SRC_ALPHA;
+	gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+	gl3_wanted.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 	gl3_wanted.alphatest = false;
 	gl3_wanted.zwrite = false;
 	R_GL3Bind( gl3_particle_texture );
@@ -165,8 +165,8 @@ void R_GL3DrawTracers( double frametime, particle_t *cl_active_tracers )
 		return;
 
 	gl3_wanted.blend = true;
-	gl3_wanted.src = GL_SRC_ALPHA;
-	gl3_wanted.dst = GL_ONE;
+	gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+	gl3_wanted.dst = GL3_BLEND_ONE;
 	gl3_wanted.alphatest = false;
 	gl3_wanted.zwrite = false;
 

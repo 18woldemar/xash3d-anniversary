@@ -26,6 +26,7 @@ the index buffer once per view with a new store, so the driver never waits for t
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 #include "world.glsl.h"
 #include "shadow.glsl.h"
 
@@ -899,8 +900,8 @@ static void R_GL3EmitDecals( msurface_t *s, int page, const float *lm, const gl3
 		if( numverts < 3 )
 			continue;
 
-		decal_states.src = premultiplied ? GL_ONE : GL_SRC_ALPHA;
-		decal_states.dst = GL_ONE_MINUS_SRC_ALPHA;
+		decal_states.src = premultiplied ? GL3_BLEND_ONE : GL3_BLEND_SRC_ALPHA;
+		decal_states.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 
 		// the previous decal draw goes on when nothing differs
 		if( gl3_world.numdraws > gl3_world.object_first_draw )
@@ -1230,12 +1231,12 @@ void R_GL3DefaultStates( gl3_states_t *st )
 {
 	memset( st, 0, sizeof( *st ));
 	st->blend = false;
-	st->src = GL_ONE;
-	st->dst = GL_ZERO;
+	st->src = GL3_BLEND_ONE;
+	st->dst = GL3_BLEND_ZERO;
 	st->alphatest = false;
 	st->zwrite = true;
 	st->ztest = true;
-	st->zfunc = GL_LEQUAL;
+	st->zfunc = GL3_DEPTH_LEQUAL;
 	st->cull = GL3_CULL_FRONT;
 	st->alpharef = 0;
 }
@@ -1314,8 +1315,8 @@ void R_GL3CollectWaterAlpha( void )
 
 	R_GL3DefaultStates( &st );
 	st.blend = true;
-	st.src = GL_SRC_ALPHA;
-	st.dst = GL_ONE_MINUS_SRC_ALPHA;
+	st.src = GL3_BLEND_SRC_ALPHA;
+	st.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 	st.zwrite = false;
 	R_GL3WorldSetState( &st, color );
 	gl3_world.untextured = false;
@@ -1354,15 +1355,15 @@ static void R_GL3BrushRenderMode( const cl_entity_t *e )
 		break;
 	case kRenderTransColor:
 		st.blend = true;
-		st.src = GL_SRC_ALPHA;
-		st.dst = GL_ONE_MINUS_SRC_ALPHA;
+		st.src = GL3_BLEND_SRC_ALPHA;
+		st.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 		Vector4Set( color, e->curstate.rendercolor.r / 255.0f, e->curstate.rendercolor.g / 255.0f, e->curstate.rendercolor.b / 255.0f, e->curstate.renderamt / 255.0f );
 		gl3_world.untextured = true;
 		break;
 	case kRenderTransAdd:
 		st.blend = true;
-		st.src = GL_ONE;
-		st.dst = GL_ONE;
+		st.src = GL3_BLEND_ONE;
+		st.dst = GL3_BLEND_ONE;
 		st.zwrite = false;
 		Vector4Set( color, gl3_tr.blend, gl3_tr.blend, gl3_tr.blend, 1.0f );
 		break;
@@ -1372,15 +1373,15 @@ static void R_GL3BrushRenderMode( const cl_entity_t *e )
 		if( FBitSet( gp_host->features, ENGINE_QUAKE_COMPATIBLE ))
 		{
 			st.blend = true;
-			st.src = GL_SRC_ALPHA;
-			st.dst = GL_ONE_MINUS_SRC_ALPHA;
+			st.src = GL3_BLEND_SRC_ALPHA;
+			st.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 			color[3] = gl3_tr.blend;
 		}
 		break;
 	default:
 		st.blend = true;
-		st.src = GL_SRC_ALPHA;
-		st.dst = GL_ONE_MINUS_SRC_ALPHA;
+		st.src = GL3_BLEND_SRC_ALPHA;
+		st.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 		st.zwrite = false;
 		color[3] = gl3_tr.blend;
 		break;

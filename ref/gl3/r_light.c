@@ -25,6 +25,7 @@ does with its dlight block.
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 #include "atlas.h"
 
 #define GL3_MAX_PAGES        16

@@ -24,6 +24,7 @@ Attributes and samplers have fixed numbers for every program (r_local.h GL3_ATTR
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 #include "flashlight.glsl.h"
 
 #define GL3_MAX_PROGRAMS 32

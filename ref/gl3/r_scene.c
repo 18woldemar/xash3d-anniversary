@@ -21,6 +21,7 @@ what they expect from WorldToScreen and GetMatrix, and they go to the GPU as the
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 #include "entity_types.h"
 
 gl3_view_t    gl3_ri;

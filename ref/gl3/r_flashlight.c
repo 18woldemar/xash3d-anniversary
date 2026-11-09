@@ -25,6 +25,7 @@ light. That is why no surface normal is needed here, and why the projection alon
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 #include "pm_defs.h"
 
 // Half-Life 2's own numbers, from the behaviour of its flashlighteffect.cpp. The light hangs below the

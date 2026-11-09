@@ -24,6 +24,7 @@ and binding is a single call.
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 
 #define GL3_MAX_TEXTURE_SIZE 4096
 #define GL3_TEXTURES_HASH_SIZE ( GL3_MAX_TEXTURES >> 2 )

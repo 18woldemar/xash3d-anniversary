@@ -23,6 +23,7 @@ draw.glsl multiplies the texture by the vertex colour, and untextured draws use 
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 #include "draw.glsl.h"
 
 typedef struct
@@ -246,7 +247,7 @@ void R_GL3EffectFog( qboolean allow )
 }
 
 // a clear writes depth only through an open mask, so the state cache is told that it was opened
-void R_GL3ClearBuffers( GLbitfield mask )
+void R_GL3ClearBuffers( uint mask )
 {
 	glDepthMask( GL_TRUE );
 	gl3_applied.zwrite = true;
@@ -309,12 +310,12 @@ qboolean R_GL3InitDraw( void )
 
 	// the context's defaults, then everything once as the engine expects at start
 	gl3_applied.blend = false;
-	gl3_applied.src = GL_ONE;
-	gl3_applied.dst = GL_ZERO;
+	gl3_applied.src = GL3_BLEND_ONE;
+	gl3_applied.dst = GL3_BLEND_ZERO;
 	gl3_applied.alphatest = false;
 	gl3_applied.zwrite = true;
 	gl3_applied.ztest = false;
-	gl3_applied.zfunc = GL_LESS;
+	gl3_applied.zfunc = GL3_DEPTH_LESS;
 	gl3_applied.cull = GL3_CULL_NONE;
 	gl3_applied.alpharef = 0;
 	gl3_applied.depthbias = 0.0f;
@@ -326,7 +327,7 @@ qboolean R_GL3InitDraw( void )
 	}
 	gl3_wanted = gl3_applied;
 	gl3_wanted.ztest = true;
-	gl3_wanted.zfunc = GL_LEQUAL;
+	gl3_wanted.zfunc = GL3_DEPTH_LEQUAL;
 	R_GL3ApplyStates();
 	return true;
 }
@@ -454,8 +455,8 @@ void R_GL3SetRenderMode( int mode )
 	case kRenderTransColor:
 	case kRenderTransTexture:
 		gl3_wanted.blend = true;
-		gl3_wanted.src = GL_SRC_ALPHA;
-		gl3_wanted.dst = GL_ONE_MINUS_SRC_ALPHA;
+		gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+		gl3_wanted.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 		gl3_wanted.alphatest = false;
 		break;
 	case kRenderTransAlpha:
@@ -465,14 +466,14 @@ void R_GL3SetRenderMode( int mode )
 	case kRenderGlow:
 	case kRenderTransAdd:
 		gl3_wanted.blend = true;
-		gl3_wanted.src = GL_SRC_ALPHA;
-		gl3_wanted.dst = GL_ONE;
+		gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+		gl3_wanted.dst = GL3_BLEND_ONE;
 		gl3_wanted.alphatest = false;
 		break;
 	case kRenderScreenFadeModulate:
 		gl3_wanted.blend = true;
-		gl3_wanted.src = GL_ZERO;
-		gl3_wanted.dst = GL_SRC_COLOR;
+		gl3_wanted.src = GL3_BLEND_ZERO;
+		gl3_wanted.dst = GL3_BLEND_SRC_COLOR;
 		gl3_wanted.alphatest = false;
 		break;
 	case kRenderNormal:
@@ -494,21 +495,21 @@ void R_GL3TriRenderMode( int mode )
 		break;
 	case kRenderTransAlpha:
 		gl3_wanted.blend = true;
-		gl3_wanted.src = GL_SRC_ALPHA;
-		gl3_wanted.dst = GL_ONE_MINUS_SRC_ALPHA;
+		gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+		gl3_wanted.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 		gl3_wanted.zwrite = false;
 		break;
 	case kRenderTransColor:
 	case kRenderTransTexture:
 		gl3_wanted.blend = true;
-		gl3_wanted.src = GL_SRC_ALPHA;
-		gl3_wanted.dst = GL_ONE_MINUS_SRC_ALPHA;
+		gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+		gl3_wanted.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 		break;
 	case kRenderGlow:
 	case kRenderTransAdd:
 		gl3_wanted.blend = true;
-		gl3_wanted.src = GL_SRC_ALPHA;
-		gl3_wanted.dst = GL_ONE;
+		gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+		gl3_wanted.dst = GL3_BLEND_ONE;
 		gl3_wanted.zwrite = false;
 		break;
 	}
@@ -523,8 +524,8 @@ void R_GL3DrawStretchPic( float x, float y, float w, float h, float s1, float t1
 void R_GL3FillRGBA( int rendermode, float x, float y, float w, float h, byte r, byte g, byte b, byte a )
 {
 	gl3_wanted.blend = true;
-	gl3_wanted.src = GL_SRC_ALPHA;
-	gl3_wanted.dst = rendermode == kRenderTransAdd ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA;
+	gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+	gl3_wanted.dst = rendermode == kRenderTransAdd ? GL3_BLEND_ONE : GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 	gl3_color = GL3_ARGB( a, r, g, b );
 
 	R_GL3Quad( gl3_white_texture, x, y, w, h, 0.0f, 0.0f, 1.0f, 1.0f, gl3_color );

@@ -21,7 +21,6 @@ GNU General Public License for more details.
 // the core profile has no fixed-function pipeline to fall back on.
 
 #include "ref_common.h"
-#include "r_gl.h"
 #include "com_strings.h"
 #include "crtlib.h"
 #include "crclib.h"
@@ -45,10 +44,25 @@ static inline model_t *R_GL3ModelHandle( int index )
 	return gp_cl->models[index];
 }
 
+// What the renderer asks of a graphics API. The core does not see an API's header: a GPU object is a number the
+// backend gives out, and the render states below are their own constants. They carry OpenGL's values, so the GL
+// backend passes them straight through and another backend translates them.
+typedef uint gl3_handle_t;
+
 // ref_gl culls GL_FRONT with counter-clockwise front faces
 #define GL3_CULL_NONE  0
-#define GL3_CULL_FRONT GL_FRONT
-#define GL3_CULL_BACK  GL_BACK
+#define GL3_CULL_FRONT 0x0404
+#define GL3_CULL_BACK  0x0405
+
+#define GL3_BLEND_ZERO                0
+#define GL3_BLEND_ONE                 1
+#define GL3_BLEND_SRC_COLOR           0x0300
+#define GL3_BLEND_SRC_ALPHA           0x0302
+#define GL3_BLEND_ONE_MINUS_SRC_ALPHA 0x0303
+
+#define GL3_DEPTH_LESS   0x0201
+#define GL3_DEPTH_EQUAL  0x0202
+#define GL3_DEPTH_LEQUAL 0x0203
 
 typedef struct gl3_texture_s
 {
@@ -57,7 +71,7 @@ typedef struct gl3_texture_s
 	word        width, height;
 	byte        numMips;
 	uint        flags;     // texFlags_t (C++ has no |= on enums)
-	GLuint      glnum;     // 0: no texture object (yet)
+	gl3_handle_t glnum;    // 0: no texture object (yet)
 	byte        applied[4]; // filtering, addressing, mip cap and anisotropy last set on it, +1 (0: never)
 	rgbdata_t  *original;  // TF_KEEP_SOURCE
 	size_t      size;      // bytes in all levels
@@ -79,12 +93,12 @@ typedef struct gl3_texture_s
 typedef struct
 {
 	qboolean blend;
-	GLenum   src, dst;
+	uint     src, dst;  // GL3_BLEND_*
 	qboolean alphatest; // in the shaders: a fragment under alpharef is discarded
 	qboolean zwrite;
 	qboolean ztest;
-	GLenum   zfunc;
-	GLenum   cull;      // GL3_CULL_NONE, GL_FRONT or GL_BACK
+	uint     zfunc;     // GL3_DEPTH_*
+	uint     cull;      // GL3_CULL_*
 	int      alpharef;  // 0..255
 	float    depthbias; // glPolygonOffset units / 2^24
 	float    slopebias; // glPolygonOffset factor
@@ -226,20 +240,20 @@ void R_GL3UpdateTexture( int texnum, int cols, int rows, int width, int height, 
 qboolean R_GL3KeepTextureForNextMap( unsigned int texnum );
 int R_GL3FindTexture( const char *name );
 void R_GL3FreeTexture( unsigned int texnum );
-int R_GL3WrapTexture( const char *name, GLuint glnum, int width, int height, uint flags );
+int R_GL3WrapTexture( const char *name, gl3_handle_t glnum, int width, int height, uint flags );
 void R_GL3ProcessTexture( int texnum, float gamma, int topColor, int bottomColor );
 const char *R_GL3TextureName( unsigned int texnum );
 const byte *R_GL3TextureData( unsigned int texnum );
 void R_GL3BindTexture( int texnum );
-void R_GL3BindLightmap( GLuint glnum );
-void R_GL3BindGamma( GLuint glnum );
+void R_GL3BindLightmap( gl3_handle_t glnum );
+void R_GL3BindGamma( gl3_handle_t glnum );
 void R_GL3BindRipple( int texnum );
 void R_GL3BindCookie( int texnum );
 void R_GL3BindShadowMap( int texnum );
 void R_GL3EnsureSceneTarget( void );
 qboolean R_GL3SceneTargetActive( void );
 void R_GL3RestoreBackBuffer( void );
-void R_GL3UnbindTexture( GLuint glnum );
+void R_GL3UnbindTexture( gl3_handle_t glnum );
 void R_GL3ForgetBindings( void );
 qboolean R_GL3TextureFilteringEnabled( int texnum );
 
@@ -281,8 +295,8 @@ enum
 typedef struct
 {
 	char   name[32];
-	GLuint prog;
-	GLint  vsc, psc;             // the register arrays' locations, -1 when unused
+	gl3_handle_t prog;
+	int    vsc, psc;             // the register arrays' locations, -1 when unused
 	int    vsc_count, psc_count; // and their sizes
 	uint   vsc_serial, psc_serial; // the shared registers' version it last took
 } gl3_program_t;
@@ -305,7 +319,7 @@ void R_GL3SetTransform( const float rows[16] );
 void R_GL3SetDrawFog( const float eyeplane[4], const float fog[4] );
 void R_GL3EffectFog( qboolean allow );
 void R_GL3DrawReset( void );
-void R_GL3ClearBuffers( GLbitfield mask );
+void R_GL3ClearBuffers( uint mask );
 void R_GL3CountDraw( int vertices );
 qboolean R_GL3InitDraw( void );
 void R_GL3ShutdownDraw( void );
@@ -515,7 +529,7 @@ qboolean R_GL3CheckLightmap( msurface_t *fa );
 void R_GL3DynamicBegin( void );
 qboolean R_GL3DynamicLightmap( msurface_t *fa, float *scale, float offset[2] );
 void R_GL3LightmapsCommit( void );
-GLuint R_GL3LightmapTexture( int page );
+gl3_handle_t R_GL3LightmapTexture( int page );
 
 //
 // r_device.c

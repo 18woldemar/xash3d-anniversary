@@ -20,6 +20,7 @@ read. ref_gl applies no gamma either.
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 
 static void R_GL3ReadBackBuffer( byte *rgba, int width, int height )
 {

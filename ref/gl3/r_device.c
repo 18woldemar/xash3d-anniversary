@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 
 #define GL3_DEFINE( type, name ) type p##name;
 GL3_FUNCTIONS( GL3_DEFINE )

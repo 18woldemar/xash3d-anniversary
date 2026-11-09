@@ -23,6 +23,7 @@ bone per vertex and at most 64 bones per submodel, so each submodel maps its bon
 */
 
 #include "r_local.h"
+#include "r_gl.h"
 #include "studio.glsl.h"
 #include "shadow.glsl.h"
 
@@ -385,19 +386,19 @@ static void R_GL3StudioStates( gl3_states_t *st, int meshflags, qboolean *fog )
 		break;
 	case kRenderTransColor:
 		st->blend = true;
-		st->src = GL_SRC_ALPHA;
-		st->dst = GL_ONE_MINUS_SRC_ALPHA;
+		st->src = GL3_BLEND_SRC_ALPHA;
+		st->dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 		break;
 	case kRenderTransAdd:
 		st->blend = true;
-		st->src = GL_ONE;
-		st->dst = GL_ONE;
+		st->src = GL3_BLEND_ONE;
+		st->dst = GL3_BLEND_ONE;
 		st->zwrite = false;
 		break;
 	default:
 		st->blend = true;
-		st->src = GL_SRC_ALPHA;
-		st->dst = GL_ONE_MINUS_SRC_ALPHA;
+		st->src = GL3_BLEND_SRC_ALPHA;
+		st->dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 		break;
 	}
 
@@ -412,15 +413,15 @@ static void R_GL3StudioStates( gl3_states_t *st, int meshflags, qboolean *fog )
 		if( opaque )
 		{
 			st->blend = true;
-			st->src = GL_ONE;
-			st->dst = GL_ONE;
+			st->src = GL3_BLEND_ONE;
+			st->dst = GL3_BLEND_ONE;
 			st->zwrite = false;
 			*fog = false;
 		}
 		else
 		{
-			st->src = GL_SRC_ALPHA;
-			st->dst = GL_ONE;
+			st->src = GL3_BLEND_SRC_ALPHA;
+			st->dst = GL3_BLEND_ONE;
 		}
 	}
 }

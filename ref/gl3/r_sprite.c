@@ -353,16 +353,16 @@ void R_GL3DrawSpriteModel( cl_entity_t *e )
 	case kRenderTransColor:
 	case kRenderTransTexture:
 		gl3_wanted.blend = true;
-		gl3_wanted.src = GL_SRC_ALPHA;
-		gl3_wanted.dst = GL_ONE_MINUS_SRC_ALPHA;
+		gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+		gl3_wanted.dst = GL3_BLEND_ONE_MINUS_SRC_ALPHA;
 		break;
 	case kRenderGlow:
 		gl3_wanted.ztest = false;
 		// fallthrough
 	case kRenderTransAdd:
 		gl3_wanted.blend = true;
-		gl3_wanted.src = GL_SRC_ALPHA;
-		gl3_wanted.dst = GL_ONE;
+		gl3_wanted.src = GL3_BLEND_SRC_ALPHA;
+		gl3_wanted.dst = GL3_BLEND_ONE;
 		gl3_wanted.zwrite = false;
 		break;
 	default:
@@ -485,14 +485,14 @@ void R_GL3DrawSpriteModel( cl_entity_t *e )
 	if( lightmap && visible )
 	{
 		gl3_wanted.blend = r_lightmap->value ? false : true;
-		gl3_wanted.zfunc = GL_EQUAL;
+		gl3_wanted.zfunc = GL3_DEPTH_EQUAL;
 		gl3_wanted.alphatest = false;
-		gl3_wanted.src = GL_ZERO;
-		gl3_wanted.dst = GL_SRC_COLOR;
+		gl3_wanted.src = GL3_BLEND_ZERO;
+		gl3_wanted.dst = GL3_BLEND_SRC_COLOR;
 		R_GL3TriColor4f( color2[0], color2[1], color2[2], gl3_tr.blend );
 		R_GL3Bind( gl3_white_texture );
 		R_DrawSpriteQuad( frame, origin, v_right, v_up, scale );
-		gl3_wanted.zfunc = GL_LEQUAL;
+		gl3_wanted.zfunc = GL3_DEPTH_LEQUAL;
 		gl3_wanted.blend = false;
 	}
 
