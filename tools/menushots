@@ -20,7 +20,7 @@ mkdir -p "$out" "$run/valve"
 rm -f "$out"/*.png
 cp "$script" "$run/valve/menushots.txt"
 rm -f "$log"
-RUN_TIMEOUT=$limit "$tools/run" run "$@" +script menushots.txt > /tmp/menushots-run.out 2>&1 &
+RUN_TIMEOUT=$limit "$tools/run" run +gl_vsync 0 "$@" +script menushots.txt > /tmp/menushots-run.out 2>&1 &
 runner=$!
 
 taken=0
