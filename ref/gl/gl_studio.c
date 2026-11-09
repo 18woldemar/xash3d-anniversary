@@ -1177,7 +1177,7 @@ pfnStudioSetupModel
 */
 static void R_StudioSetupModel( int bodypart, void **ppbodypart, void **ppsubmodel )
 {
-	if( bodypart > m_pStudioHeader->numbodyparts )
+	if( bodypart >= m_pStudioHeader->numbodyparts )
 		bodypart = 0;
 
 	m_pBodyPart = (mstudiobodyparts_t *)((byte *)m_pStudioHeader + m_pStudioHeader->bodypartindex) + bodypart;

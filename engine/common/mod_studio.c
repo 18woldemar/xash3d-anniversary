@@ -972,9 +972,7 @@ static qboolean Mod_StudioMesh( const studiohdr_t *phdr, const mstudiomodel_t *s
 	const byte *const end = (const byte *)phdr + phdr->length;
 	const short *cmd = (const short *)((const byte *)phdr + mesh->triindex);
 
-	if( mesh->numtris == 0 )
-		return true;
-
+	// every reader walks the commands whatever numtris says, so a mesh of none has to hold an empty list
 	if( mesh->triindex < 0 || mesh->triindex >= phdr->length )
 		return false;
 
@@ -1042,7 +1040,9 @@ static qboolean Mod_StudioSequences( const studiohdr_t *phdr )
 
 	for( int i = 0; i < phdr->numseq; i++ )
 	{
-		if( seq[i].seqgroup < 0 || seq[i].seqgroup >= phdr->numseqgroups || seq[i].numblends < 0
+		// the readers take the first blend's animation whatever numblends says; the groups' cache has MAXSTUDIOGROUPS slots
+		if( seq[i].seqgroup < 0 || seq[i].seqgroup >= phdr->numseqgroups || seq[i].seqgroup >= MAXSTUDIOGROUPS || seq[i].numblends <= 0
+			|| ( FBitSet( seq[i].motiontype, STUDIO_X | STUDIO_Y | STUDIO_Z ) && ( seq[i].motionbone < 0 || seq[i].motionbone >= phdr->numbones ))
 			|| !Mod_StudioRange( phdr, seq[i].eventindex, seq[i].numevents, sizeof( mstudioevent_t )))
 			return false;
 
@@ -1117,7 +1117,9 @@ static qboolean Mod_StudioFits( const studiohdr_t *phdr )
 	{
 		const mstudiomodel_t *submodel = (const mstudiomodel_t *)((const byte *)phdr + bodypart[i].modelindex);
 
-		if( !Mod_StudioRange( phdr, bodypart[i].modelindex, bodypart[i].nummodels, sizeof( mstudiomodel_t )))
+		// the renderers divide by both
+		if( bodypart[i].nummodels <= 0 || bodypart[i].base <= 0
+			|| !Mod_StudioRange( phdr, bodypart[i].modelindex, bodypart[i].nummodels, sizeof( mstudiomodel_t )))
 			return false;
 
 		for( int j = 0; j < bodypart[i].nummodels; j++ )
@@ -1146,8 +1148,9 @@ static qboolean Mod_StudioSkinsFit( const studiohdr_t *phdr, qboolean checkdata 
 	const mstudiobodyparts_t *bodypart = (const mstudiobodyparts_t *)((const byte *)phdr + phdr->bodypartindex);
 	int64_t skins;
 
+	// no textures of its own: they come from the T file, and skins with nothing to index are not read
 	if( phdr->numtextures <= 0 )
-		return phdr->numtextures == 0;
+		return phdr->numtextures == 0 && phdr->numskinref == 0;
 
 	if( phdr->numskinref < 0 || phdr->numskinfamilies < 0 )
 		return false;

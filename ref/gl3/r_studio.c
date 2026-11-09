@@ -242,8 +242,8 @@ static void R_StudioSetupModel( int bodypart, void **ppbodypart, void **ppsubmod
 	studiohdr_t *hdr = gl3_studio.header;
 	int index;
 
-	if( bodypart > hdr->numbodyparts )
-		bodypart = 0; // gl_studio.c's off-by-one, kept
+	if( bodypart >= hdr->numbodyparts )
+		bodypart = 0;
 
 	gl3_studio.bodypart = (mstudiobodyparts_t *)((byte *)hdr + hdr->bodypartindex) + bodypart;
 	index = ( gl3_ri.currententity->curstate.body / gl3_studio.bodypart->base ) % gl3_studio.bodypart->nummodels;
