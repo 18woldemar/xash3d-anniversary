@@ -2606,8 +2606,13 @@ static qboolean CL_ProjectedFlashlight( const cl_entity_t *ent )
 {
 	convar_t *style = Cvar_FindVar( "r_style" );
 	convar_t *light = Cvar_FindVar( "r_flashlight" );
+	const char *renderer = Cvar_VariableString( "r_refdll_loaded" );
 
 	if( ent->index != ( cl.playernum + 1 ))
+		return false;
+
+	// the cvars outlive the renderer that made them, and the others have only the dynamic light
+	if( Q_strcmp( renderer, "gl3" ) && Q_strcmp( renderer, "vk" ))
 		return false;
 
 	return style && light && (int)style->value == 2 && light->value != 0.0f;
