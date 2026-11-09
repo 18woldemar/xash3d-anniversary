@@ -512,6 +512,7 @@ static qboolean R_VKCreateSwapchain( void )
 		return false;
 	}
 
+	gEngfuncs.Con_Reportf( "ref_vk: swapchain %ux%u, %u images, vsync %d\n", extent.width, extent.height, vk.num_images, vk.vsync );
 	vk.rebuild = false;
 	return true;
 }
