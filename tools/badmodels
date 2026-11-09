@@ -50,13 +50,16 @@ tri = u(mesh + 4)
 	'numevents': lambda: p(u(168) + 48, 0xffffff),
 	'skin_far': lambda: p(200, far),
 	'skinvalue': lambda: struct.pack_into('<h', b, u(200), 0x7000),
+	'numcontrollers': lambda: p(148, 33),
+	'ctrlindex': lambda: p(u(152) + 20, 0x7000),
+	'bonectrl': lambda: p(u(144) + 40, 0x7000),
 	'texdata': lambda: p(u(184) + 76, far),
 }[case]()
 open(dst, 'wb').write(b)
 EOF
 }
 
-for kind in ${BADMODELS_KINDS:-vert tri_end tri_far skinref mesh_far nummesh numverts vertinfo vertindex normindex model_far nummodels bodypart_far numbodyparts bone_far numbones boneparent bonebyte seqgroup animindex numevents skin_far skinvalue texdata}; do
+for kind in ${BADMODELS_KINDS:-vert tri_end tri_far skinref mesh_far nummesh numverts vertinfo vertindex normindex model_far nummodels bodypart_far numbodyparts bone_far numbones boneparent bonebyte seqgroup animindex numevents skin_far skinvalue texdata numcontrollers ctrlindex bonectrl}; do
 	damage "$kind"
 	RUN_DIR=$tree RUN_TIMEOUT=${BADMODELS_SECONDS:-14} "$tools/run" run -nosound +map c1a0 > /dev/null 2>&1
 	if grep -aq '^Crash' "$tree/engine.log"; then result=CRASH; crashes=$((crashes + 1)); else result=ok; fi

@@ -953,9 +953,13 @@ static qboolean Mod_StudioBoneWeights( const studiohdr_t *phdr, int32_t offset, 
 
 	for( int i = 0; i < count; i++ )
 	{
+		qboolean ended = false; // the renderers count the slots up to the first -1 and use that many
+
 		for( int k = 0; k < MAXSTUDIOBONEWEIGHTS; k++ )
 		{
-			if( weights[i].bone[k] >= phdr->numbones )
+			if( weights[i].bone[k] == -1 )
+				ended = true;
+			else if( ended || weights[i].bone[k] < 0 || weights[i].bone[k] >= phdr->numbones )
 				return false;
 		}
 	}
@@ -1058,7 +1062,8 @@ static qboolean Mod_StudioSkeleton( const studiohdr_t *phdr )
 	const mstudiobbox_t *hitbox = (const mstudiobbox_t *)((const byte *)phdr + phdr->hitboxindex);
 	const mstudioattachment_t *attachment = (const mstudioattachment_t *)((const byte *)phdr + phdr->attachmentindex);
 
-	if( phdr->numbones > MAXSTUDIOBONES
+	// the bone setup keeps a stack array of adjustments, one per controller
+	if( phdr->numbones > MAXSTUDIOBONES || phdr->numbonecontrollers > MAXSTUDIOCONTROLLERS
 		|| !Mod_StudioRange( phdr, phdr->boneindex, phdr->numbones, sizeof( mstudiobone_t ))
 		|| !Mod_StudioRange( phdr, phdr->bonecontrollerindex, phdr->numbonecontrollers, sizeof( mstudiobonecontroller_t ))
 		|| !Mod_StudioRange( phdr, phdr->hitboxindex, phdr->numhitboxes, sizeof( mstudiobbox_t ))
@@ -1069,11 +1074,19 @@ static qboolean Mod_StudioSkeleton( const studiohdr_t *phdr )
 	{
 		if( bone[i].parent < -1 || bone[i].parent >= phdr->numbones )
 			return false;
+
+		for( int k = 0; k < 6; k++ )
+		{
+			if( bone[i].bonecontroller[k] < -1 || bone[i].bonecontroller[k] >= phdr->numbonecontrollers )
+				return false;
+		}
 	}
 
 	for( int i = 0; i < phdr->numbonecontrollers; i++ )
 	{
-		if( controller[i].bone < -1 || controller[i].bone >= phdr->numbones )
+		// an entity has four controller bytes, and STUDIO_MOUTH stands for its mouth
+		if( controller[i].bone < -1 || controller[i].bone >= phdr->numbones
+			|| controller[i].index < 0 || controller[i].index > STUDIO_MOUTH )
 			return false;
 	}
 
