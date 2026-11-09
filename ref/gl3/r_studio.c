@@ -43,7 +43,6 @@ gl3_studio_t gl3_studio;
 // what only this file uses (the rest of ref_gl's g_studio and m_p* globals)
 static struct
 {
-	double   time;
 	double   frametime;
 	qboolean interpolate;
 	int      models_drawn;
@@ -99,6 +98,7 @@ void R_GL3StudioInit( void )
 	gl3_studio.lineargammatable = (const uint16_t *)ENGINE_GET_PARM( PARM_GET_LINEARGAMMATABLE_PTR );
 	gl3_st.interpolate = true;
 	gl3_st.elights = (dlight_t *)ENGINE_GET_PARM( PARM_GET_ELIGHTS_PTR );
+	gl3_studio.glowshellfreq = gEngfuncs.Cvar_Get( "r_glowshellfreq", "2.2", 0, "glowing shell frequency update" );
 	gl3_st.builtin_renderer = gEngfuncs.Cvar_Get( "r_studio_builtin_renderer", "0", 0, "use built-in studio model renderer instead of the one provided by client library (debugging)" );
 }
 
@@ -107,12 +107,12 @@ static void R_StudioSetupTimings( void )
 {
 	if( FBitSet( gl3_ri.rvp.flags, RF_DRAW_WORLD ))
 	{
-		gl3_st.time = gp_cl->time;
+		gl3_studio.time = gp_cl->time;
 		gl3_st.frametime = gp_cl->time - gp_cl->oldtime;
 	}
 	else
 	{
-		gl3_st.time = gp_host->realtime;
+		gl3_studio.time = gp_host->realtime;
 		gl3_st.frametime = gp_host->frametime;
 	}
 }
@@ -263,7 +263,7 @@ static int R_StudioCheckBBox( void )
 
 static void pfnStudioDynamicLight( cl_entity_t *ent, alight_t *plight )
 {
-	R_EntityDynamicLight( ent, plight, FBitSet( gl3_ri.rvp.flags, RF_DRAW_WORLD ), gl3_st.time, gl3_studio.lightspot, gl3_studio.lightvec );
+	R_EntityDynamicLight( ent, plight, FBitSet( gl3_ri.rvp.flags, RF_DRAW_WORLD ), gl3_studio.time, gl3_studio.lightspot, gl3_studio.lightvec );
 }
 
 // the strongest elights near the model (at most GL3_MAX_LOCALLIGHTS)
@@ -291,7 +291,7 @@ static void R_StudioEntityLight( alight_t *lightinfo )
 		float f, r2, minstrength;
 		int k;
 
-		if( el->die < gl3_st.time || el->radius <= 0.0f )
+		if( el->die < gl3_studio.time || el->radius <= 0.0f )
 			continue;
 
 		// lights keyed to this entity follow it (or its attachment)
@@ -667,7 +667,7 @@ static void R_StudioClientEvents( void )
 	if( pseqdesc->numevents == 0 )
 		return;
 
-	end = R_GL3StudioEstimateFrame( e, pseqdesc, gl3_st.time );
+	end = R_GL3StudioEstimateFrame( e, pseqdesc, gl3_studio.time );
 	start = end - e->curstate.framerate * gp_host->frametime * pseqdesc->fps;
 	pevent = (mstudioevent_t *)((byte *)hdr + pseqdesc->eventindex);
 
@@ -801,7 +801,7 @@ static void R_StudioSetUpTransform( cl_entity_t *e )
 	vec3_t angles = Vec3( e->angles );
 
 	if( e->curstate.movetype == MOVETYPE_STEP && !FBitSet( gp_host->features, ENGINE_COMPUTE_STUDIO_LERP ))
-		R_GL3StudioLerpMovement( e, gl3_st.time, origin, angles );
+		R_GL3StudioLerpMovement( e, gl3_studio.time, origin, angles );
 
 	if( !FBitSet( gp_host->features, ENGINE_COMPENSATE_QUAKE_BUG ))
 		angles[PITCH] = -angles[PITCH]; // stupid quake bug
@@ -852,7 +852,7 @@ static float R_StudioEstimateInterpolant( cl_entity_t *e )
 
 	if( gl3_st.interpolate && ( e->curstate.animtime >= e->latched.prevanimtime + 0.01f ))
 	{
-		dadt = ( gl3_st.time - e->curstate.animtime ) / 0.1f;
+		dadt = ( gl3_studio.time - e->curstate.animtime ) / 0.1f;
 		if( dadt > 2.0f )
 			dadt = 2.0f;
 	}
@@ -885,7 +885,7 @@ static void R_StudioFxTransform( cl_entity_t *ent, matrix3x4 transform )
 		break;
 	case kRenderFxExplode:
 	{
-		float scale = 1.0f + ( gl3_st.time - ent->curstate.animtime ) * 10.0f;
+		float scale = 1.0f + ( gl3_studio.time - ent->curstate.animtime ) * 10.0f;
 
 		if( scale > 2.0f )
 			scale = 2.0f; // don't blow up more than 200%
@@ -1014,7 +1014,7 @@ static void R_StudioMergeBones( cl_entity_t *e, model_t *m_pSubModel )
 		e->curstate.sequence = 0;
 
 	pseqdesc = (mstudioseqdesc_t *)((byte *)hdr + hdr->seqindex) + e->curstate.sequence;
-	f = R_GL3StudioEstimateFrame( e, pseqdesc, gl3_st.time );
+	f = R_GL3StudioEstimateFrame( e, pseqdesc, gl3_studio.time );
 	panim = (mstudioanim_t *)gEngfuncs.R_StudioGetAnim( hdr, m_pSubModel, pseqdesc );
 	R_StudioCalcRotations( e, pos, q, pseqdesc, panim, f );
 	pbones = (mstudiobone_t *)((byte *)hdr + hdr->boneindex);
@@ -1079,19 +1079,19 @@ static void R_StudioSetupBones( cl_entity_t *e )
 		e->curstate.sequence = 0;
 
 	pseqdesc = (mstudioseqdesc_t *)((byte *)hdr + hdr->seqindex) + e->curstate.sequence;
-	f = R_GL3StudioEstimateFrame( e, pseqdesc, gl3_st.time );
+	f = R_GL3StudioEstimateFrame( e, pseqdesc, gl3_studio.time );
 	dadt = R_StudioEstimateInterpolant( e );
 	R_StudioBlendedRotations( e, pos, q, pseqdesc, f,
 		( e->curstate.blending[0] * dadt + e->latched.prevblending[0] * ( 1.0f - dadt )) / 255.0f,
 		( e->curstate.blending[1] * dadt + e->latched.prevblending[1] * ( 1.0f - dadt )) / 255.0f );
 
-	if( gl3_st.interpolate && e->latched.sequencetime && ( e->latched.sequencetime + 0.2f > gl3_st.time ) && ( e->latched.prevsequence < hdr->numseq ))
+	if( gl3_st.interpolate && e->latched.sequencetime && ( e->latched.sequencetime + 0.2f > gl3_studio.time ) && ( e->latched.prevsequence < hdr->numseq ))
 	{
 		// blend from the last sequence
 		pseqdesc = (mstudioseqdesc_t *)((byte *)hdr + hdr->seqindex) + e->latched.prevsequence;
 		R_StudioBlendedRotations( e, pos1b, q1b, pseqdesc, e->latched.prevframe,
 			e->latched.prevseqblending[0] / 255.0f, e->latched.prevseqblending[1] / 255.0f );
-		R_StudioSlerpBones( hdr->numbones, q, pos, q1b, pos1b, 1.0f - ( gl3_st.time - e->latched.sequencetime ) / 0.2f );
+		R_StudioSlerpBones( hdr->numbones, q, pos, q1b, pos1b, 1.0f - ( gl3_studio.time - e->latched.sequencetime ) / 0.2f );
 	}
 	else e->latched.prevframe = f;
 

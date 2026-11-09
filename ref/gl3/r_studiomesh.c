@@ -526,9 +526,9 @@ void R_GL3StudioDrawPoints( void )
 	if( !header || !submodel || !e )
 		return;
 
-	// ponytail: the glow shell (multiplayer only) needs smoothed normals and the chrome sprite; not drawn yet
-	if( FBitSet( gl3_studio.forcefaceflags, STUDIO_NF_CHROME ))
-		return;
+	// the shell is the same mesh pushed out along its normals, with the chrome sprite that R_GL3Bind was given
+	// ponytail: ref_gl averages the normals of shared vertices first; hard edges of a model can show gaps here
+	const qboolean shell = e->curstate.renderfx == kRenderFxGlowShell && FBitSet( gl3_studio.forcefaceflags, STUDIO_NF_CHROME );
 
 	sub = R_GL3StudioSub( header, submodel );
 	if( !sub->numverts ) // a buffer of this submodel could not be made or filled
@@ -543,12 +543,12 @@ void R_GL3StudioDrawPoints( void )
 	for( int i = 0; i < sub->numbones; i++ )
 		memcpy( palette + i * 12, gl3_studio.bonestransform[sub->bones[i]], sizeof( float ) * 12 );
 
-	const qboolean flashlight = R_GL3FlashlightActive( );
+	const qboolean flashlight = !shell && R_GL3FlashlightActive( );
 
 	// Remember this pose for the next frame's shadow map, before anything else is set. Only when a map
 	// is going to be built: the list is drained by that pass alone, and a full list that nothing drains
 	// would hold the poses of whatever frame happened to fill it.
-	if( R_GL3FlashlightShadowsWanted( ) && e != gl3_tr.viewent && gl3_sm.numcasts[gl3_sm.castlist] < GL3_MAX_SHADOW_CASTERS )
+	if( !shell && R_GL3FlashlightShadowsWanted( ) && e != gl3_tr.viewent && gl3_sm.numcasts[gl3_sm.castlist] < GL3_MAX_SHADOW_CASTERS )
 	{
 		const int n = gl3_sm.numcasts[gl3_sm.castlist]++;
 
@@ -631,12 +631,24 @@ void R_GL3StudioDrawPoints( void )
 		VectorCopy( gl3_studio.lightvec, vs + 8 );
 		vs[11] = FBitSet( flags, STUDIO_NF_CHROME ) ? 1.0f : 0.0f;
 		VectorCopy( gl3_studio.chrome_origin, vs + 12 );
+		if( shell )
+		{
+			// gl_studio.c: the colour is the entity's, and the highlight wanders around it
+			const float freq = gl3_studio.glowshellfreq->value * (float)gl3_studio.time;
+
+			vs[4] = e->curstate.rendercolor.r / 255.0f;
+			vs[5] = e->curstate.rendercolor.g / 255.0f;
+			vs[6] = e->curstate.rendercolor.b / 255.0f;
+			vs[12] = cos( freq ) * 4000.0f;
+			vs[13] = sin( freq ) * 4000.0f;
+			vs[14] = cos( freq * 0.33f ) * 4000.0f;
+		}
 		vs[15] = transadd ? 1.0f : 0.0f;
 		VectorCopy( gl3_ri.vright, vs + 16 );
 		vs[19] = meshblend;
 		vs[20] = 1.0f / (float)tex->width;
 		vs[21] = 1.0f / (float)tex->height;
-		vs[22] = 0.0f;
+		vs[22] = shell ? Q_max( 1.0f, (float)e->curstate.renderamt ) / 128.0f : 0.0f;
 		vs[23] = gl3_studio.numlocallights > 0 ? 1.0f : 0.0f;
 		R_GL3SetVSConstants( 5, vs, 6 );
 
@@ -649,7 +661,7 @@ void R_GL3StudioDrawPoints( void )
 		else Vector4Set( fog, 0.0f, 0.0f, 0.0f, 0.0f );
 		R_GL3SetPSConstants( 1, fog, 1 );
 
-		R_GL3BindTexture( R_GL3StudioMeshTexture( ptexture, pskinref[pmesh[j].skinref] ));
+		R_GL3BindTexture( shell ? R_GL3BoundTexture( ) : R_GL3StudioMeshTexture( ptexture, pskinref[pmesh[j].skinref] ));
 		R_GL3CommitConstants();
 		glDrawElements( GL_TRIANGLES, sub->meshes[j].count, GL_UNSIGNED_SHORT, (void *)( sub->meshes[j].first * sizeof( word )));
 		R_GL3CountDraw( sub->meshes[j].count );

@@ -5,7 +5,7 @@
 #ifdef VERTEX_SHADER
 // 0..3 world to clip; 4 eye plane; 5 ambient, shade, flat shade (0/1), fullbright (0/1); 6 light colour, a the
 // vertex alpha; 7 light direction, w 1 = chrome texcoords; 8 chrome origin, w 1 = colour is the blend (TransAdd);
-// 9 view right, w blend; 10 1 / texture size, w 1 = local lights; 11..14 local lights: origin, R^2;
+// 9 view right, w blend; 10 1 / texture size, z how far the glow shell stands out, w 1 = local lights; 11..14 local lights: origin, R^2;
 // 15..18 their colours through the linear gamma table (0..1023); 20..211 3x4 bone matrices, three rows each;
 // 212..215 world to the flashlight's clip space
 uniform vec4 vsc[216];
@@ -37,6 +37,7 @@ void main()
 	int b = int( a_extra ) * 3;
 	vec3 world = vec3( dot( vsc[20 + b], a_position ), dot( vsc[21 + b], a_position ), dot( vsc[22 + b], a_position ));
 	vec3 normal = vec3( dot( vsc[20 + b].xyz, a_normal ), dot( vsc[21 + b].xyz, a_normal ), dot( vsc[22 + b].xyz, a_normal ));
+	world += normal * vsc[10].z; // the glow shell
 	vec4 w = vec4( world, 1.0 );
 	vec3 lv;
 	vec3 rgb;
@@ -111,6 +112,8 @@ void main()
 	}
 
 	v_color = vec4( rgb / 255.0, vsc[6].a );
+	if( vsc[10].z > 0.0 )
+		v_color = vec4( vsc[6].rgb, 1.0 ); // the glow shell: the entity's colour, unlit
 
 	// R_StudioSetupChrome
 	if( vsc[7].w > 0.5 )

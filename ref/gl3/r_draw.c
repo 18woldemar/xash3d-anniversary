@@ -545,6 +545,11 @@ void R_GL3Bind( int texnum )
 	gl3_texture = texnum;
 }
 
+int R_GL3BoundTexture( void )
+{
+	return gl3_texture;
+}
+
 void R_GL3TriBegin( int mode )
 {
 	gl3_prim_mode = mode;

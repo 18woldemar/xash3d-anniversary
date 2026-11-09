@@ -320,6 +320,7 @@ void R_GL3TriRenderMode( int mode );
 void R_GL3DrawStretchPic( float x, float y, float w, float h, float s1, float t1, float s2, float t2, int texnum );
 void R_GL3FillRGBA( int rendermode, float x, float y, float w, float h, byte r, byte g, byte b, byte a );
 void R_GL3Bind( int texnum );
+int R_GL3BoundTexture( void );
 void R_GL3TriBegin( int mode );
 void R_GL3TriEnd( void );
 void R_GL3TriColor4ub( byte r, byte g, byte b, byte a );
@@ -455,6 +456,8 @@ typedef struct
 	const uint16_t *lightgammatable;
 	const uint16_t *screengammatable;
 	const uint16_t *lineargammatable;
+	double time;           // the clock of the model being drawn
+	cvar_t *glowshellfreq;
 } gl3_studio_t;
 
 extern gl3_studio_t gl3_studio;
