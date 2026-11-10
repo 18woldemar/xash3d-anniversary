@@ -13,7 +13,8 @@ It is a fork of [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) and runs the 
 > [releases page](https://github.com/18woldemar/xash3d-anniversary/releases); a "repack" from anywhere else is
 > not ours.
 
-**Status: test builds.** Linux x86-64 only for now. Windows comes next, Android after it.
+**Status: in development, no release yet:** build it from source (below). Linux x86-64 only for now. Windows comes
+next, Android after it.
 
 ## What is different from Xash3D FWGS
 
@@ -37,6 +38,8 @@ It is a fork of [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) and runs the 
   language folders from a read-only game directory.
 
 ## Running a release
+
+There is no release yet; this is how it will work. Until then see [Building from source](#building-from-source).
 
 1. Install Half-Life in Steam.
 2. Download `xash3d-anniversary-<version>-linux-amd64.tar.gz` from the
