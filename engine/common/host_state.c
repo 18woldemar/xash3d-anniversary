@@ -136,6 +136,11 @@ static void Host_ShutdownGame( void )
 {
 	SV_ShutdownGame();
 
+	// a load keeps the models it can, so a content folder switched in the menu needs the stopped server
+	// a load from the main menu starts from
+	if( FS_MountsChanged( ) && ( GameState->nextstate == STATE_LOAD_GAME || GameState->nextstate == STATE_LOAD_LEVEL ))
+		SV_Shutdown( "" );
+
 	switch( GameState->nextstate )
 	{
 	case STATE_LOAD_GAME:

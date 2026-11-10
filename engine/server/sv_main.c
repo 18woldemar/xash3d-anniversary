@@ -1154,6 +1154,10 @@ void SV_Shutdown( const char *finalmsg )
 	// release all models
 	Mod_FreeAll();
 
+	// nothing loaded is left: the time to mount what the menu has switched on or off since
+	if( FS_MountsChanged( ))
+		FS_Rescan_f();
+
 	HPAK_FlushHostQueue();
 	Log_Printf( "Server shutdown\n" );
 	Log_Close();

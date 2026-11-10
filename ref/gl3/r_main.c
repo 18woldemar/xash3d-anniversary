@@ -159,7 +159,7 @@ static void R_EndFrame( void )
 
 	R_GL3EndSceneTarget(); // never Present inside the bracket
 
-	if( r_showtex->value > 0.0f )
+	if( r_showtex->value > 0.0f && r_showtex->value < GL3_MAX_TEXTURES )
 	{
 		int texnum = (int)r_showtex->value;
 		gl3_texture_t *tex = R_GL3GetTexture( texnum );

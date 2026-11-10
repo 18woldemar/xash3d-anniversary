@@ -140,7 +140,11 @@ static qboolean R_GL3FlashlightMakeShadowMap( void )
 
 	color = R_GL3BackendCreateShadowMap( GL3_SHADOW_SIZE );
 	if( color )
+	{
 		gl3_flashlight.shadow = R_GL3WrapTexture( "*flashshadow", color, GL3_SHADOW_SIZE, GL3_SHADOW_SIZE, TF_NEAREST | TF_CLAMP | TF_NOMIPMAP );
+		if( !gl3_flashlight.shadow ) // no slot: the texture has no owner to free it
+			R_GL3BackendDeleteTexture( color );
+	}
 
 	if( !gl3_flashlight.shadow )
 	{

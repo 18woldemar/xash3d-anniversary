@@ -813,6 +813,7 @@ void R_GL3BackendShutdownDraw( void )
 	if( gl3_draw_vao )
 		glDeleteVertexArrays( 1, &gl3_draw_vao );
 	gl3_draw_vbo = gl3_draw_vao = 0;
+	memset( &gl3_lock, 0, sizeof( gl3_lock )); // its rows go with r_temppool
 }
 
 void R_GL3BackendUseDrawLayout( void )

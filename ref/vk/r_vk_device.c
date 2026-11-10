@@ -1284,8 +1284,14 @@ gl3_handle_t R_GL3BackendCreateShadowMap( int size )
 	VkImageView view;
 	const gl3_handle_t color = R_VKCreateRenderTexture( VK_SHADOW_FORMAT, size, size, &view );
 
-	if( !R_VKMakeAttachment( &vk.shadow_depth, vk.depth_format, extent, 1, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT ))
+	if( !color )
 		return 0;
+
+	if( !R_VKMakeAttachment( &vk.shadow_depth, vk.depth_format, extent, 1, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT ))
+	{
+		R_GL3BackendDeleteTexture( color );
+		return 0;
+	}
 
 	{
 		const VkImageView attachments[2] = { view, vk.shadow_depth.view };
@@ -1301,7 +1307,11 @@ gl3_handle_t R_GL3BackendCreateShadowMap( int size )
 		};
 
 		if( !R_VKCheck( vkCreateFramebuffer( vk.device, &framebuffer, NULL, &vk.shadow_framebuffer ), "vkCreateFramebuffer" ))
+		{
+			R_GL3BackendDeleteTexture( color );
+			R_GL3BackendFreeShadowMap();
 			return 0;
+		}
 	}
 
 	vk.shadow_extent = extent;

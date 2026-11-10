@@ -83,6 +83,8 @@ void *FS_GetNativeObject( const char *obj )
 	return NULL;
 }
 
+static uint32_t fs_mounted; // the flags the search paths were last built with
+
 static uint32_t FS_MountFlags( void )
 {
 	uint32_t flags = 0;
@@ -98,7 +100,14 @@ static uint32_t FS_MountFlags( void )
 
 void FS_Rescan_f( void )
 {
-	g_fsapi.Rescan( FS_MountFlags(), ui_language.string );
+	fs_mounted = FS_MountFlags();
+	g_fsapi.Rescan( fs_mounted, ui_language.string );
+}
+
+// a content folder switched on or off in the menu during a game: only safe to mount with no model loaded
+qboolean FS_MountsChanged( void )
+{
+	return FS_MountFlags() != fs_mounted;
 }
 
 static void FS_LoadVFSConfig( const char *gamedir )
@@ -162,7 +171,8 @@ void FS_LoadGameInfo( void )
 {
 	FS_LoadVFSConfig( g_fsapi.Gamedir( ));
 
-	g_fsapi.LoadGameInfo( FS_MountFlags(), ui_language.string );
+	fs_mounted = FS_MountFlags();
+	g_fsapi.LoadGameInfo( fs_mounted, ui_language.string );
 }
 
 static void FS_ClearPaths_f( void )
