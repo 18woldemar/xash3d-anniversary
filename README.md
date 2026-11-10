@@ -1,149 +1,112 @@
-> [!CAUTION]
-> **Only download Xash3D FWGS from official sources.** Third-party builds, "modded launchers", "optimized" repacks and random mirrors are frequently bundled with malware, miners, spyware and credential stealers. We cannot vouch for anything we did not build. Get official binaries only from the [releases page](https://github.com/FWGS/xash3d-fwgs/releases/tag/continuous).
+# xash3d-anniversary
 
-# Xash3D FWGS Engine <img align="right" width="128" height="128" src="https://github.com/FWGS/xash3d-fwgs/raw/master/game_launch/icon-xash-material.png" alt="Xash3D FWGS icon" />
-[![GitHub Actions Status](https://github.com/FWGS/xash3d-fwgs/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/FWGS/xash3d-fwgs/actions/workflows/c-cpp.yml) [![FreeBSD Build Status](https://img.shields.io/cirrus/github/FWGS/xash3d-fwgs?label=freebsd%20build)](https://cirrus-ci.com/github/FWGS/xash3d-fwgs) \
-[![Discord Server](https://img.shields.io/discord/355697768582610945?logo=Discord&label=International%20Discord%20chat)](http://xash.su/discord/) [![Russian speakers Telegram Chat](https://img.shields.io/badge/Russian_speakers_Telegram_chat-gray?logo=Telegram)](https://t.me/flyingwithgauss) \
-[![Download Daily Build](https://img.shields.io/badge/downloads-testing-orange)](https://github.com/FWGS/xash3d-fwgs/releases/tag/continuous)
+Half-Life on Linux and the Steam Deck, made to be played with a pad on a TV: a menu built for the controller,
+Valve's 25th anniversary pad layout, captions for the game's speech, and a new renderer whose three styles switch
+while you play.
 
-Xash3D ([pronounced](https://ipa-reader.com/?text=ks%C9%91%CA%82) `[ksɑʂ]`) FWGS is a game engine, aimed to provide compatibility with Half-Life Engine and extend it, as well as to give game developers well known workflow.
+It is a fork of [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) and runs the Half-Life you own in Steam,
+25th anniversary update included. Nothing of the game is here or in the release archives.
 
-Xash3D FWGS is a heavily modified fork of an original [Xash3D Engine](https://www.moddb.com/engines/xash3d-engine) by Unkle Mike.
+> [!IMPORTANT]
+> This is an unofficial fork. Report its bugs [here](https://github.com/18woldemar/xash3d-anniversary/issues),
+> not to FWGS. Builds come only from this repository's
+> [releases page](https://github.com/18woldemar/xash3d-anniversary/releases); a "repack" from anywhere else is
+> not ours.
 
-## Donate
-[![Donate to FWGS button](https://img.shields.io/badge/Donate_to_FWGS-%3C3-magenta)](Documentation/donate.md) \
-If you like Xash3D FWGS, consider supporting individual engine maintainers. By supporting us, you help to continue developing this game engine further. The sponsorship links are available in [documentation](Documentation/donate.md).
+**Status: test builds.** Linux x86-64 only for now. Windows comes next, Android after it.
 
-## Fork features
-* Steam Half-Life (HLSDK 2.5) support.
-* Crossplatform and modern compilers support: supports Windows, Linux, BSD & Android on x86 & ARM and [many more](Documentation/ports.md).
-* Better multiplayer: multiple master servers, headless dedicated server, voice chat, [GoldSrc protocol support](Documentation/goldsrc-protocol-support.md) and IPv6 support.
-* Multiple renderers support: OpenGL, GLESv1, GLESv2 and Software.
-* Advanced virtual filesystem: `.pk3` and `.pk3dir` support, compatibility with GoldSrc FS module, fast case-insensitivity emulation for crossplatform.
-* Mobility API: better game integration on mobile devices (vibration, touch controls).
-* Different input methods: touch and gamepad in addition to mouse & keyboard.
-* TrueType font rendering, as a part of mainui_cpp.
-* External VGUI support module.
-* PNG & KTX2 image format support.
-* Ogg Vorbis (`.ogg`) & Ogg Opus (`.opus`) audio formats support.
-* [A set of small improvements](Documentation/), without broken compatibility.
+## What is different from Xash3D FWGS
 
-## Installation & Running
-0) Get Xash3D FWGS binaries: you can use [testing](https://github.com/FWGS/xash3d-fwgs/releases/tag/continuous) build or you can compile engine from source code.
-1) Copy engine binaries to some directory.
-2) Copy `valve` directory from [Half-Life](https://store.steampowered.com/app/70/HalfLife/) to directory with engine binaries.
-If your CPU is NOT x86 compatible or you're running 64-bit version of the engine, you may want to compile [Half-Life SDK](https://github.com/FWGS/hlsdk-portable).
-This repository contains our fork of HLSDK and restored source code for Half-Life expansions and some mods.
-You still needed to copy `valve` directory as all game resources located there.
-3) Run the main executable (`xash3d.exe` or AppImage).
+- **Gamepad menu.** Every page is reachable with the pad: banners, a button legend, save and load lists with
+  pictures, a server browser with filters, and options laid out in one column. It is the default on the Steam
+  Deck and in Steam Big Picture; on a desktop add `-gamepadui`. Text entry uses the system's on-screen keyboard.
+  The mouse-and-keyboard menu stays as it was.
+- **Valve's pad layout** from the 25th anniversary update: triggers fire, A jump, B duck, X use, Y reload,
+  bumpers pick the previous and next weapon, BACK or the right stick click is the flashlight. START opens the
+  menu on a tap and quicksaves when held for half a second.
+- **Speech captions** in English and Russian (Audio options), from Fograin's Half-Life Subtitles MOD.
+- **New renderer** (`ref_gl3`, OpenGL 3.3, the default) with three render styles, switched on the fly in
+  Video options:
+  - *Original*: the look of the classic hardware renderer.
+  - *Software*: the look of the software renderer, with its water and filtering.
+  - *Enhanced*: per-pixel lighting, a projected flashlight with shadows, multisampling.
+- **Vulkan renderer** (`ref_vk`, Vulkan 1.1), the same renderer on Vulkan. Experimental: start it with `-ref vk`.
+- **HD models** switch in Video options, for the 25th anniversary's high definition pack, applied at the next
+  map or load.
+- Engine fixes found along the way: model and map validation, SIGTERM handling, mounting of `valve_hd` and
+  language folders from a read-only game directory.
 
-For additional info, run Xash3D with `-help` command line key.
+## Running a release
 
-### Android
-0) Install the APK file.
-1) Copy `valve` directory to a folder named `xash` in the Internal storage.
-2) Run games from within the app.
+1. Install Half-Life in Steam.
+2. Download `xash3d-anniversary-<version>-linux-amd64.tar.gz` from the
+   [releases page](https://github.com/18woldemar/xash3d-anniversary/releases) and unpack it anywhere you can
+   write to.
+3. Run `./xash3d-anniversary`. It finds Half-Life in your Steam libraries, SD cards included. If it cannot, set
+   `XASH3D_RODIR` to the game's folder (the one that holds `valve`).
 
-## Reporting issues
-* Issues are accepted in both English and Russian.
-* They are only accepted if you run legally acquired product (e.g. Half-Life in Steam).
+On the Steam Deck: in desktop mode add `xash3d-anniversary` to Steam as a non-Steam game, then play it from
+gaming mode.
 
-## Contributing code
-* Check the CONTRIBUTING.md file.
+Arguments go to the engine, for example:
 
-## Build instructions
-We are using Waf build system. If you have some Waf-related questions, I recommend you to read [Waf Book](https://waf.io/book/).
+| Argument | What it does |
+|---|---|
+| `-gamepadui` / `-nogamepadui` | gamepad menu on or off |
+| `-ref gl3` / `vk` / `gl` / `soft` | renderer: new OpenGL 3.3, Vulkan, classic OpenGL, software |
+| `-windowed`, `-width 1280 -height 720` | window instead of full screen |
+| `-dev 2 -log` | developer messages, written to `engine.log` |
 
-**NOTE: NEVER USE GitHub's ZIP ARCHIVES. GitHub doesn't include external dependencies we're using!**
+Your saves and settings are written next to the binaries, in `valve/`; the Steam copy of the game is only read.
 
-### Prerequisites
-If your CPU is x86 compatible and you're on Windows or Linux, we are building 32-bit code by default. This was done to maintain compatibility with Steam releases of Half-Life and based on it's engine games.
-Even if Xash3D FWGS does support targetting 64-bit, you can't load games without recompiling them from source code!
+The archive needs SDL2 from the system (SteamOS and the common desktop distributions have it). `ref_gl3` needs
+OpenGL 3.3; if the driver has no 3.3 the engine falls back to the classic renderer.
 
-If your CPU is NOT x86 compatible or you decided build 64-bit version of engine, you may want to compile [Half-Life SDK](https://github.com/FWGS/hlsdk-portable).
-This repository contains our fork of HLSDK and restored source code for Half-Life expansions and some mods.
+## Building from source
 
-#### Windows (Visual Studio)
-* Install Visual Studio.
-* Install latest [Python](https://python.org) **OR** run `cinst python.install` if you have Chocolatey.
-* Install latest [Git](https://git-scm.com/download/win) **OR** run `cinst git.install` if you have Chocolatey.
-* Download [SDL2](https://libsdl.org/download-2.0.php) development package for Visual Studio.
-* Clone this repository: `git clone --recursive https://github.com/FWGS/xash3d-fwgs`.
-* Make sure you have at least 12GB of free space to store all build-time dependencies: ~10GB for Visual Studio, 300 MB for Git, 100 MB for Python and other.
+The engine, the menu and the game code are three repositories:
+[xash3d-anniversary](https://github.com/18woldemar/xash3d-anniversary) (this one, with the menu
+[mainui-anniversary](https://github.com/18woldemar/mainui-anniversary) as a submodule) and
+[hlsdk-anniversary](https://github.com/18woldemar/hlsdk-anniversary). Clone them side by side:
 
-#### GNU/Linux
-##### Debian/Ubuntu
-* Only for 32-bit engine on 64-bit x86 operating system:
-  * Enable i386 on your system: `$ sudo dpkg --add-architecture i386`.
-  * Install `aptitude` ([why?](https://github.com/FWGS/xash3d-fwgs/issues/1828#issuecomment-2415131759)):  `$ sudo apt update && sudo apt upgrade && sudo apt install aptitude`
-  * Install development tools: `$ sudo aptitude --without-recommends install git build-essential gcc-multilib g++-multilib libsdl2-dev:i386 libfreetype-dev:i386 libopus-dev:i386 libbz2-dev:i386 libvorbis-dev:i386 libopusfile-dev:i386 libogg-dev:i386`.
-  * Set PKG_CONFIG_PATH environment variable to point at 32-bit libraries: `$ export PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig`.
+```sh
+git clone --recursive https://github.com/18woldemar/xash3d-anniversary
+git clone https://github.com/18woldemar/hlsdk-anniversary
+```
 
-* For 64-bit engine on 64-bit x86 and other non-x86 systems:
-  * Install development tools: `$ sudo apt install git build-essential python libsdl2-dev libfreetype6-dev libopus-dev libbz2-dev libvorbis-dev libopusfile-dev libogg-dev`.
+Build dependencies on Debian or Ubuntu (other distributions have the same packages):
 
-* Clone this repostory: `$ git clone --recursive https://github.com/FWGS/xash3d-fwgs`.
+```sh
+sudo apt install git build-essential python3 libsdl2-dev libfreetype-dev libopus-dev libbz2-dev \
+    libvorbis-dev libopusfile-dev libogg-dev libvulkan-dev glslang-tools
+```
 
-##### RedHat/Fedora
-* Only for 32-bit engine on 64-bit x86 operating system:
-  * Install development tools: `$ sudo dnf install git gcc gcc-c++ glibc-devel.i686 SDL3-devel.i686 sdl2-compat-devel.i686 opus-devel.i686 freetype-devel.i686 bzip2-devel.i686 libvorbis-devel.i686 opusfile-devel.i686 libogg-devel.i686 libatomic.i686`.
-  * Set PKG_CONFIG_PATH environment variable to point at 32-bit libraries: `$ export PKG_CONFIG_PATH=/usr/lib/pkgconfig`.
+`libvulkan-dev` and `glslang-tools` are only for `ref_vk`; without them it is not built.
 
-* For 64-bit engine on 64-bit x86 and other non-x86 systems:
-  * Install development tools: `$ sudo dnf install git gcc gcc-c++ SDL3-devel sdl2-compat-devel opus-devel freetype-devel bzip2-devel libvorbis-devel opusfile-devel libogg-devel`.
+Build both as 64-bit and install them into one directory:
 
-* Clone this repostory: `$ git clone --recursive https://github.com/FWGS/xash3d-fwgs`.
+```sh
+for tree in xash3d-anniversary hlsdk-anniversary; do
+    (cd $tree && ./waf configure -T release -8 --prefix=/ && ./waf build install --destdir=$HOME/xash-anniversary)
+done
+cd ~/xash-anniversary
+XASH3D_RODIR="$HOME/.local/share/Steam/steamapps/common/Half-Life" ./xash3d -game valve
+```
 
-#### Android (Windows/Linux/macOS)
-* Install [Android Studio](https://developer.android.com/studio) (or the command line tools).
-* Install [Python](https://python.org) (at least 2.7, latest is better).
-* Install [Git](https://git-scm.com/download/win).
-* Install [Ninja](https://ninja-build.org/).
-* Install [CMake](https://cmake.org/) (for some dependencies).
+This build is for your own machine. A release archive is built by `tools/package` inside Valve's Steam Runtime 3
+SDK, so it runs on the Deck's older glibc. The menu art and the captions in a release are made by `tools/mkmenu`
+and `tools/mksubs`; see the notes at the top of each.
 
-* Clone this repostory: `$ git clone --recursive https://github.com/FWGS/xash3d-fwgs`.
-* Check out nanogl and gl4es, they aren't checked out by default: `$ git submodule update --init --checkout 3rdparty/nanogl 3rdparty/gl4es/gl4es`.
+Upstream's notes on other platforms, build options and tests are in the
+[Xash3D FWGS README](https://github.com/FWGS/xash3d-fwgs#readme).
 
-#### iOS/iPadOS
-* Install Xcode from the appstore.
-* Install [Homebrew package manager](https://brew.sh).
+## Credits and licences
 
-* Install build dependencies by running: `brew install python`.
+- Xash3D FWGS by FWGS and its contributors, from Xash3D by Unkle Mike. The engine and the menu are under the
+  GPL v3 or later; the game code is under the Half-Life SDK licence.
+- Speech captions: [Fograin's Half-Life Subtitles MOD](https://github.com/Fograin/hl-subs-mod).
+- Pad icons: [Gamepad-Asset-Pack](https://github.com/AL2009man/Gamepad-Asset-Pack) by Al. Lopez, MIT.
+- Controller picture: "360 controller.svg" by Alphathon, Wikimedia Commons, CC BY-SA 3.0.
+- Where the rest of the menu art comes from: [tools/menu/CREDITS.md](tools/menu/CREDITS.md).
 
-* Clone the SDL2 repo `$ git clone --recursive https://github.com/libsdl-org/SDL.git -b SDL2` and compile the iOS framework by navigating to SDL/Xcode/SDL and opening the Xcode project.
-
-* Clone this repository: `$ git clone --recursive https://github.com/FWGS/xash3d-fwgs`.
-* Check out nanogl, it isn't checked out by default: `$ git submodule update --init --checkout 3rdparty/nanogl`.
-
-### Building
-#### Windows (Visual Studio)
-0) Open command line.
-1) Navigate to `xash3d-fwgs` directory.
-2) (optional) Examine which build options are available: `waf --help`.
-3) Configure build: `waf configure --sdl2=c:/path/to/SDL2`.
-4) Compile: `waf build`.
-5) Install: `waf install --destdir=c:/path/to/any/output/directory`.
-
-#### Linux
-If compiling 32-bit on amd64, make sure `PKG_CONFIG_PATH` from the previous step is set correctly, prior to running configure.
-
-0) (optional) Examine which build options are available: `./waf --help`.
-1) Configure build: `./waf configure` (you need to pass `-8` to compile 64-bit engine on 64-bit x86 processor).
-2) Compile: `./waf build`.
-3) Install: `./waf install --destdir=/path/to/any/output/directory`.
-
-#### Android (Windows/Linux/macOS)
-To build you should clone [SDL](https://github.com/libsdl-org/SDL) from `SDL2` branch and [HLSDK-portable](https://github.com/FWGS/hlsdk-portable) `mobile-hacks` branch repositories to 3rdparty folder, after that you should be able to open the project in Android Studio from `android` directory or manually call Gradle to build the APK.
-
-#### iOS/iPadOS (MacOS only)
-0) (optional) Examine which build options are available: `./waf --help`.
-1) Configure build: `./waf configure --ios --enable-bundled-deps --sdl2 (path/to/SDL2.framework)`, set `--ios-simulator` instead of `--ios` if you want to build for simulator.
-2) Compile `./waf build`.
-3) Navigate to `build` and copy your compiled SDL2.framework there, then add your game dylibs to `build/ios/libs/(gamedir)/(dlls/cl_dlls)`(You can also run `scripts/ios/buildhlsdk.sh` instead to automatically create an ipa with hlsdk dylibs)
-4) Run `scripts/ios/createipa.sh` to create an installable ipa
-
-### Running tests
-
-Tests are enabled with `--enable-tests` passed to `./waf configure` and can be run with `./waf --alltests`.
-
-This builds both standalone unit tests and a separate engine test binary (`xash3d_tests`) that embeds engine-level tests. The engine test binary requires no game assets.
+Half-Life is a trademark of Valve Corporation. This project is not affiliated with or endorsed by Valve.
