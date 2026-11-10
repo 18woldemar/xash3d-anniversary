@@ -1,0 +1,67 @@
+name: Bug report
+description: Something does not work or looks wrong in xash3d-anniversary
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the tracker of xash3d-anniversary, an unofficial fork. Please do not report its bugs to FWGS.
+        Check the open and closed issues first: the bug may already be known or fixed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you did, what you expected, and what happened instead. A screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start a new game on Hard
+        2. Go to the first elevator in c1a0
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Build
+      description: The commit or the archive name. The `host_ver` console command prints it.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System and GPU
+      placeholder: Steam Deck, SteamOS 3.7 / Arch Linux, AMD RX 6600, Mesa 25.1
+    validations:
+      required: true
+  - type: dropdown
+    id: renderer
+    attributes:
+      label: Renderer
+      options:
+        - gl3 (default)
+        - vk
+        - gl
+        - soft
+        - not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: input
+    attributes:
+      label: Played with
+      options:
+        - Gamepad, gamepad menu
+        - Gamepad, desktop menu
+        - Mouse and keyboard
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: engine.log
+      description: Run with `-dev 2 -log`, reproduce the bug, then attach `engine.log` from the game folder (drag the file here).

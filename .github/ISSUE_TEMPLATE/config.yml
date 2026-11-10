@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Xash3D FWGS
+    url: https://github.com/FWGS/xash3d-fwgs/issues
+    about: Bugs that also happen in upstream Xash3D FWGS, without this fork's changes, belong there.

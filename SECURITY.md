@@ -1,18 +1,14 @@
-# Xash3D FWGS Security Policy
+# Security policy
 
 ## Supported versions
 
-Because we don't have clear release cycle yet, support is only provided to the
-latest engine versions from `master` branch. You can use `host_ver` command in
-console to fetch detailed info about the engine build.
+Only the latest `master` of this fork. The `host_ver` console command prints the engine build.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-If you discover a security vulnerability in this project, it can be reported
-privately though `Security` tab on GitHub:
-https://github.com/FWGS/xash3d-fwgs/security
+Report it privately through the `Security` tab, "Report a vulnerability":
+https://github.com/18woldemar/xash3d-anniversary/security
 
-Alternatively, you can report them publicly on the `Issues` tab:
-https://github.com/FWGS/xash3d-fwgs/issues
-
-In both cases, expect a reply within approximately a week.
+Please do not open a public issue for it. If the problem is in code this fork shares with
+[Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) unchanged, it affects upstream too: say so in the report,
+and we will pass it on to FWGS privately, or you can report it to them directly.

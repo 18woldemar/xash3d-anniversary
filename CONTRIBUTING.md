@@ -1,3 +1,11 @@
+# Contributing to xash3d-anniversary
+
+This fork follows the Xash3D FWGS guidelines below. Two additions:
+
+- A change that is not specific to this fork (an engine bug that upstream has too, a general feature) is better
+  sent to [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) first; it reaches this fork with the next merge.
+- Bug reports here go through the issue form, which asks for the details listed below.
+
 ## If you are reporting bugs
 
 1. Check that you are using the latest version. To build the latest Xash3D FWGS, look at README.md.
