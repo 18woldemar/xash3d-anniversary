@@ -218,7 +218,11 @@ MAYBE_UNUSED static const wchar_t *FS_PathToWideChar( const char *path )
 {
 #if XASH_WIN32
 	static wchar_t pathBuffer[MAX_PATH];
-	MultiByteToWideChar( CP_UTF8, 0, path, -1, pathBuffer, MAX_PATH );
+
+	// a path that does not convert (too long, not UTF-8) must not leave the last one in the buffer: the caller
+	// could stat, open or remove that file instead. An empty path fails every call it reaches.
+	if( !MultiByteToWideChar( CP_UTF8, 0, path, -1, pathBuffer, MAX_PATH ))
+		pathBuffer[0] = 0;
 	return pathBuffer;
 #else
 	return NULL;

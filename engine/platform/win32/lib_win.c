@@ -22,7 +22,10 @@ GNU General Public License for more details.
 static const wchar_t *FS_PathToWideChar( const char *path )
 {
 	static wchar_t pathBuffer[MAX_PATH];
-	MultiByteToWideChar( CP_UTF8, 0, path, -1, pathBuffer, MAX_PATH );
+
+	// a path that does not convert must not leave the last one in the buffer, or that library loads instead
+	if( !MultiByteToWideChar( CP_UTF8, 0, path, -1, pathBuffer, MAX_PATH ))
+		pathBuffer[0] = 0;
 	return pathBuffer;
 }
 
