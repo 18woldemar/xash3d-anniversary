@@ -462,7 +462,8 @@ def configure(conf):
 	conf.env.append_unique('LINKFLAGS', linkflags)
 
 	if conf.env.COMPILER_CC == 'msvc':
-		opt_cflags = ['/we4013'] # -Werror=implicit-function-declaration
+		# -Werror=implicit-function-declaration, =incompatible-pointer-types, =int-conversion
+		opt_cflags = ['/we4013', '/we4133', '/we4047']
 		conf.env.CFLAGS_werror = conf.filter_cflags(opt_cflags, cflags)
 	else:
 		opt_flags = [
