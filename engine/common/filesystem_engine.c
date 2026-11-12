@@ -23,6 +23,7 @@ GNU General Public License for more details.
 #endif
 
 #include <errno.h>
+#include <sys/stat.h>
 #include "common.h"
 #include "library.h"
 #include "platform/platform.h"
@@ -359,6 +360,109 @@ static qboolean FS_DetermineReadOnlyRootDirectory( char *out, size_t size )
 	return false;
 }
 
+static qboolean FS_SysDirExists( const char *path )
+{
+	struct stat st;
+	return stat( path, &st ) == 0 && ( st.st_mode & S_IFDIR );
+}
+
+/*
+The Half-Life in one of the Steam libraries that <steam> lists in steamapps/libraryfolders.vdf, <steam> itself
+first, into out. tools/launcher.sh does the same on Linux; this is for a start without it.
+*/
+static qboolean FS_FindSteamGame( const char *steam, char *out, size_t size )
+{
+	char line[MAX_OSPATH * 2], lib[MAX_OSPATH];
+	FILE *f;
+
+	Q_snprintf( out, size, "%s/steamapps/common/Half-Life", steam );
+	Q_snprintf( lib, sizeof( lib ), "%s/%s", out, host.default_gamedir );
+	if( FS_SysDirExists( lib ))
+		return true;
+
+	Q_snprintf( line, sizeof( line ), "%s/steamapps/libraryfolders.vdf", steam );
+	if( !( f = fopen( line, "r" )))
+		return false;
+
+	while( fgets( line, sizeof( line ), f ))
+	{
+		// "path"		"D:\\SteamLibrary": the value is quoted, backslashes escaped
+		const char *p = Q_strstr( line, "\"path\"" );
+		size_t len = 0;
+
+		if( !p || !( p = Q_strchr( p + 6, '"' )))
+			continue;
+
+		for( p++; *p && *p != '"' && len < sizeof( lib ) - 1; p++ )
+		{
+			if( *p == '\\' && p[1] )
+				p++;
+			lib[len++] = *p;
+		}
+		lib[len] = 0;
+
+		Q_snprintf( out, size, "%s/steamapps/common/Half-Life", lib );
+		Q_snprintf( lib, sizeof( lib ), "%s/%s", out, host.default_gamedir );
+		if( FS_SysDirExists( lib ))
+		{
+			fclose( f );
+			return true;
+		}
+	}
+
+	fclose( f );
+	return false;
+}
+
+static qboolean FS_FindSteamInstall( char *out, size_t size )
+{
+#if XASH_WIN32
+	static const struct { HKEY root; const char *key, *value; } keys[] =
+	{
+		{ HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath" },
+		{ HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Valve\\Steam", "InstallPath" },
+		{ HKEY_LOCAL_MACHINE, "SOFTWARE\\Valve\\Steam", "InstallPath" },
+	};
+	int i;
+
+	for( i = 0; i < (int)ARRAYSIZE( keys ); i++ )
+	{
+		char steam[MAX_OSPATH];
+		DWORD len = sizeof( steam ) - 1, type;
+		HKEY key;
+		LONG ret;
+
+		// RegGetValue is Vista and later, the 32-bit build still starts on XP
+		if( RegOpenKeyExA( keys[i].root, keys[i].key, 0, KEY_QUERY_VALUE, &key ) != ERROR_SUCCESS )
+			continue;
+
+		ret = RegQueryValueExA( key, keys[i].value, NULL, &type, (LPBYTE)steam, &len );
+		RegCloseKey( key );
+
+		if( ret != ERROR_SUCCESS || type != REG_SZ )
+			continue;
+
+		steam[len] = 0;
+		if( FS_FindSteamGame( steam, out, size ))
+			return true;
+	}
+#elif XASH_LINUX
+	static const char *roots[] = { ".local/share/Steam", ".steam/steam", ".var/app/com.valvesoftware.Steam/.local/share/Steam" };
+	const char *home = getenv( "HOME" );
+	int i;
+
+	for( i = 0; home && i < (int)ARRAYSIZE( roots ); i++ )
+	{
+		char steam[MAX_OSPATH];
+
+		Q_snprintf( steam, sizeof( steam ), "%s/%s", home, roots[i] );
+		if( FS_FindSteamGame( steam, out, size ))
+			return true;
+	}
+#endif
+	return false;
+}
+
 /*
 ================
 FS_Init
@@ -378,7 +482,19 @@ void FS_Init( void )
 	COM_FixSlashes( rootdir );
 	COM_StripDirectorySlash( rootdir );
 
-	FS_DetermineReadOnlyRootDirectory( rodir, sizeof( rodir ));
+	if( !FS_DetermineReadOnlyRootDirectory( rodir, sizeof( rodir )))
+	{
+		char path[MAX_OSPATH];
+		struct stat st;
+
+		// no game next to the binaries and none named: the one Steam installed. The binaries' own valve/
+		// holds only saves, settings and the game code, liblist.gam comes with the game
+		Q_snprintf( path, sizeof( path ), "%s/%s/liblist.gam", rootdir, host.default_gamedir );
+		if( stat( path, &st ) != 0 && FS_FindSteamInstall( rodir, sizeof( rodir )))
+			Con_Reportf( "%s: game found in Steam: %s\n", __func__, rodir );
+		else
+			rodir[0] = 0;
+	}
 	COM_FixSlashes( rodir );
 	COM_StripDirectorySlash( rodir );
 
