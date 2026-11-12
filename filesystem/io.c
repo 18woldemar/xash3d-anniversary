@@ -989,7 +989,7 @@ qboolean FS_Rename( const char *oldname, const char *newname )
 	if( !FS_FixFileCase( fs_writepath->dir, newname2, newpath, sizeof( newpath ), true ))
 		return false;
 
-	ret = rename( oldpath, newpath );
+	ret = FS_SysRename( oldpath, newpath );
 	if( ret < 0 )
 	{
 		Con_Printf( "%s: failed to rename file %s (%s) to %s (%s): %s\n",
@@ -1025,7 +1025,7 @@ qboolean GAME_EXPORT FS_Delete( const char *path )
 	if( !FS_FixFileCase( fs_writepath->dir, path2, real_path, sizeof( real_path ), true ))
 		return true;
 
-	ret = remove( real_path );
+	ret = FS_SysRemove( real_path );
 	if( ret < 0 && errno != ENOENT )
 	{
 		Con_Printf( "%s: failed to delete file %s (%s): %s\n", __func__, real_path, path, strerror( errno ));

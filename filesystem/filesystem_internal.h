@@ -197,6 +197,8 @@ void stringlistappend( stringlist_t *list, const char *text );
 void stringlistsort( stringlist_t *list );
 void listdirectory( stringlist_t *list, const char *path, qboolean dirs_only );
 void FS_CreatePath( char *path );
+int FS_SysRename( const char *oldpath, const char *newpath );
+int FS_SysRemove( const char *path );
 int FS_SysFileTime( const char *filename );
 file_t *FS_SysOpen( const char *filepath, const char *mode );
 file_t *FS_OpenHandle( searchpath_t *search, int handle, fs_offset_t offset, fs_offset_t len );

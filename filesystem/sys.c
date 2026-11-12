@@ -148,25 +148,35 @@ MAYBE_UNUSED static void listlowercase( stringlist_t *list )
 void listdirectory( stringlist_t *list, const char *path, qboolean dirs_only )
 {
 #if XASH_WIN32
-	char pattern[4096];
-	Q_snprintf( pattern, sizeof( pattern ), "%s/*", path );
+	// paths and names are UTF-8: the narrow _findfirst takes and gives the ANSI code page, which loses every
+	// directory with a name outside it (a game under a user folder with a Cyrillic name)
+	wchar_t pattern[4096];
+	char name[MAX_SYSPATH];
+	struct _wfinddata_t n_file = { 0 };
+	intptr_t hFile;
+	char narrow[4096];
+
+	Q_snprintf( narrow, sizeof( narrow ), "%s/*", path );
+	if( !MultiByteToWideChar( CP_UTF8, 0, narrow, -1, pattern, ARRAYSIZE( pattern )))
+		return;
 
 	// ask for the directory listing handle
-	struct _finddata_t n_file = { 0 };
-	intptr_t hFile = _findfirst( pattern, &n_file );
+	hFile = _wfindfirst( pattern, &n_file );
 	if( hFile == -1 )
 		return;
 
 	// start a new chain with the the first name
-	stringlistappend( list, n_file.name );
+	if( WideCharToMultiByte( CP_UTF8, 0, n_file.name, -1, name, sizeof( name ), NULL, NULL ))
+		stringlistappend( list, name );
 
 	// iterate through the directory
-	while( _findnext( hFile, &n_file ) == 0 )
+	while( _wfindnext( hFile, &n_file ) == 0 )
 	{
 		if( dirs_only && !FBitSet( n_file.attrib, _A_SUBDIR ))
 			continue;
 
-		stringlistappend( list, n_file.name );
+		if( WideCharToMultiByte( CP_UTF8, 0, n_file.name, -1, name, sizeof( name ), NULL, NULL ))
+			stringlistappend( list, name );
 	}
 
 	_findclose( hFile );
@@ -215,6 +225,29 @@ MAYBE_UNUSED static const wchar_t *FS_PathToWideChar( const char *path )
 #endif
 }
 
+// rename and remove with UTF-8 paths (see listdirectory)
+int FS_SysRename( const char *oldpath, const char *newpath )
+{
+#if XASH_WIN32
+	wchar_t wold[MAX_PATH], wnew[MAX_PATH];
+
+	if( !MultiByteToWideChar( CP_UTF8, 0, oldpath, -1, wold, MAX_PATH ) || !MultiByteToWideChar( CP_UTF8, 0, newpath, -1, wnew, MAX_PATH ))
+		return -1;
+	return _wrename( wold, wnew );
+#else
+	return rename( oldpath, newpath );
+#endif
+}
+
+int FS_SysRemove( const char *path )
+{
+#if XASH_WIN32
+	return _wremove( FS_PathToWideChar( path ));
+#else
+	return remove( path );
+#endif
+}
+
 /*
 ============
 FS_CreatePath
@@ -232,7 +265,7 @@ void FS_CreatePath( char *path )
 			char save = *ofs;
 			*ofs = 0;
 #if XASH_WIN32
-			_mkdir( path ); // use _wmkdir maybe?
+			_wmkdir( FS_PathToWideChar( path ));
 #else // !XASH_WIN32
 			mkdir( path, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH );
 #endif // !XASH_WIN32
