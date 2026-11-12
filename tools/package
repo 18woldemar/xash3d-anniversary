@@ -6,6 +6,8 @@
 # SNIPER_ROOT is the unpacked SDK sysroot (default <workspace>/build/sniper/root), from
 # repo.steampowered.com/steamrt3/images/latest-public-beta/, the file ...Sdk-amd64,i386-sniper-sysroot.tar.gz
 # PACKAGE_HOST=1 packs this machine's own build instead: for checking the archive, it will not run on a Deck.
+# PACKAGE_WIN=1 makes the Windows archive instead: MSVC builds it on the Windows VM BUILD_VM (default win10vm, reached
+# over ssh, set up once with tools/win/deps.ps1; see tools/win/build.bat).
 set -euo pipefail
 [ $# -ge 1 ] || { sed -n '2,8p' "$0" >&2; exit 2; }
 version=$1
@@ -25,7 +27,26 @@ done
 rm -rf "$work"
 mkdir -p "$work" "$dst" "$out"
 
-if [ -n "${PACKAGE_HOST:-}" ]; then
+if [ -n "${PACKAGE_WIN:-}" ]; then
+	vm=${BUILD_VM:-win10vm}
+	# the VM has no git: an empty .git and the answers waf wants, for tools/win/git.bat
+	for tree in xash3d-anniversary hlsdk-anniversary; do
+		mkdir -p "$work/git/$tree/.git"
+		printf 'GIT_DESCRIBE=%s\r\nGIT_BRANCH=%s\r\nGIT_DATE=%s\r\n' "$(git -C "$top/$tree" describe --dirty --always)" \
+			"$(git -C "$top/$tree" rev-parse --abbrev-ref HEAD)" "$(git -C "$top/$tree" log -1 --format=%ci)" > "$work/git/$tree/.gitinfo"
+	done
+	tar -C "$top" -cf "$work/src.tar" --exclude=.git --exclude=build --exclude='.waf*' --exclude='.lock-waf*' xash3d-anniversary hlsdk-anniversary
+	tar -C "$work/git" -rf "$work/src.tar" xash3d-anniversary hlsdk-anniversary
+	gzip -c "$work/src.tar" > "$work/src.tgz"
+	for f in build.bat git.bat; do sed 's/$/\r/' "$tools/win/$f" > "$work/$f"; done
+	scp -q "$work/src.tgz" "$vm:C:/work/anniversary/src.tgz"
+	scp -q "$work/build.bat" "$work/git.bat" "$vm:C:/work/anniversary/tools/"
+	ssh "$vm" 'C:\work\anniversary\tools\build.bat > C:\work\anniversary\build.log 2>&1 & rem' || true
+	scp -q "$vm:C:/work/anniversary/build.log" "$work/build.log"
+	grep -q 'BUILD OK' "$work/build.log" || { grep -aE 'error|Error' "$work/build.log" | tail -20; echo "package: the VM build failed, $work/build.log" >&2; exit 1; }
+	scp -q -r "$vm:C:/work/anniversary/out" "$work/prefix"
+	rsync -a --exclude='*.pdb' --exclude='SDL2-LICENSE.txt' "$work/prefix/" "$dst/"
+elif [ -n "${PACKAGE_HOST:-}" ]; then
 	cp -a "$top/build/prefix/." "$dst/"
 else
 	[ -x "$root/usr/bin/gcc" ] || { echo "package: no SDK at $root" >&2; exit 1; }
@@ -48,7 +69,8 @@ EOS
 	cp -a "$work/prefix/." "$dst/"
 fi
 
-cp "$tools/launcher.sh" "$dst/xash3d-anniversary"
+# Windows finds the game itself (filesystem_engine.c FS_FindSteamInstall), Linux through the launcher
+[ -n "${PACKAGE_WIN:-}" ] || cp "$tools/launcher.sh" "$dst/xash3d-anniversary"
 rsync -a --include='/valve/' --include='/valve_*/' --include='/valve*/gfx/' --include='/valve*/gfx/shell/***' \
 	--include='/valve/resource/' --include='/valve/resource/mainui_*.txt' --include='/valve*/subtitles_*.txt' \
 	--exclude='*' --prune-empty-dirs "$run/" "$dst/"
@@ -59,6 +81,7 @@ for f in LICENSE LICENSE.md license; do
 	if [ -f "$top/hlsdk-anniversary/$f" ]; then cp "$top/hlsdk-anniversary/$f" "$dst/licenses/hlsdk-$f"; fi
 done
 cp "$tools/menu/CREDITS.md" "$dst/licenses/menu-art-CREDITS.md"
+if [ -n "${PACKAGE_WIN:-}" ]; then cp "$work/prefix/SDL2-LICENSE.txt" "$dst/licenses/SDL2-LICENSE.txt"; fi
 cat > "$dst/licenses/Gamepad-Asset-Pack-LICENSE" <<'EOT'
 The pad legend's icons are rendered from AL2009man/Gamepad-Asset-Pack.
 
@@ -84,6 +107,26 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 EOT
+if [ -n "${PACKAGE_WIN:-}" ]; then
+	cat > "$dst/README.txt" <<EOT
+xash3d-anniversary $version: Half-Life for Windows, with a menu made for a pad, speech subtitles and three render
+styles (Original, Software, Enhanced) that switch on the fly.
+
+You need Half-Life in Steam: nothing of the game is in this archive.
+Unpack it anywhere you can write to and run xash3d.exe; it finds Half-Life in your Steam libraries. If it does not,
+start it with -rodir "<the Half-Life folder>". For the pad menu add -gamepadui, or start it from Steam Big Picture
+as a non-Steam game. Saves and settings stay in valve\ next to xash3d.exe.
+
+Source: https://github.com/18woldemar/xash3d-anniversary
+Licences and where the art comes from are in licenses\. The speech captions are Fograin's Half-Life Subtitles MOD.
+EOT
+	tr -d '\r' < "$dst/README.txt" | sed 's/$/\r/' > "$work/README.txt" && mv "$work/README.txt" "$dst/README.txt"
+	rm -f "$out/$name-windows-amd64.zip"
+	(cd "$work" && zip -qr9 "$out/$name-windows-amd64.zip" "$name")
+	du -h "$out/$name-windows-amd64.zip"
+	exit 0
+fi
+
 cat > "$dst/README.txt" <<EOT
 xash3d-anniversary $version: Half-Life for Linux and the Steam Deck, with a menu made for a pad, speech subtitles
 and three render styles (Original, Software, Enhanced) that switch on the fly.
