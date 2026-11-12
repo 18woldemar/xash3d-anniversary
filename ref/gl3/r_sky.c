@@ -164,6 +164,11 @@ static void R_GL3ClipSkyPolygon( int nump, float *vecs, int stage )
 	{
 		float d;
 
+		// a vertex adds up to two points to a side; only a convex face is bounded by nump + 1, and the
+		// check at the top of the call comes after these arrays were written
+		if( newc[0] >= GL3_MAX_CLIP_VERTS - 1 || newc[1] >= GL3_MAX_CLIP_VERTS - 1 )
+			gEngfuncs.Host_Error( "%s: MAX_CLIP_VERTS\n", __func__ );
+
 		switch( sides[i] )
 		{
 		case SIDE_FRONT:

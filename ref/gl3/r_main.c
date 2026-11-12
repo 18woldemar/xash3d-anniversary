@@ -106,7 +106,11 @@ static void R_Shutdown( void )
 	R_GL3SetMSAA( 0 );
 	R_GL3ShutdownDraw();
 	R_GL3ShutdownImages();
+	// the table and the current program are statics: a renderer started again in this library must find
+	// them empty, or a stale current pointer skips the first glUseProgram and the table runs out of slots
+	R_GL3ShutdownPrograms();
 	R_GL3DestroyDevice();
+	gl3_device_ready = false;
 	Mem_FreePool( &r_temppool );
 	gEngfuncs.R_Free_Video();
 }

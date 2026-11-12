@@ -1114,7 +1114,7 @@ static void R_StudioSetupBones( cl_entity_t *e )
 		{
 			if( !Q_strcmp( pbones[i].name, "Bip01 Spine" ))
 				copy_bones = false;
-			else if( !Q_strcmp( pbones[pbones[i].parent].name, "Bip01 Pelvis" ))
+			else if( pbones[i].parent >= 0 && !Q_strcmp( pbones[pbones[i].parent].name, "Bip01 Pelvis" ))
 				copy_bones = true;
 
 			if( !copy_bones )
@@ -1429,10 +1429,12 @@ static int R_StudioDrawPlayer( int flags, entity_state_t *pplayer )
 		R_StudioSetRemapColors( bound( 0, pi->topcolor, 360 ), bound( 0, pi->bottomcolor, 360 ));
 		R_StudioRenderModel();
 
-		if( pplayer->weaponmodel )
+		model_t *pweaponmodel = pplayer->weaponmodel ? R_GL3ModelHandle( pplayer->weaponmodel ) : NULL;
+
+		// the server names the weapon model: one that is not a studio model has no header to merge with
+		if( pweaponmodel && gEngfuncs.Mod_Extradata( mod_studio, pweaponmodel ))
 		{
 			cl_entity_t saveent = *e;
-			model_t *pweaponmodel = R_GL3ModelHandle( pplayer->weaponmodel );
 
 			gl3_studio.header = (studiohdr_t *)gEngfuncs.Mod_Extradata( mod_studio, pweaponmodel );
 			R_StudioMergeBones( e, pweaponmodel );

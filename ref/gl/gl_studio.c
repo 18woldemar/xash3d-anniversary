@@ -922,7 +922,7 @@ static void R_StudioSetupBones( cl_entity_t *e )
 		{
 			if( !Q_strcmp( pbones[i].name, "Bip01 Spine" ))
 				copy_bones = false;
-			else if( !Q_strcmp( pbones[pbones[i].parent].name, "Bip01 Pelvis" ))
+			else if( pbones[i].parent >= 0 && !Q_strcmp( pbones[pbones[i].parent].name, "Bip01 Pelvis" ))
 				copy_bones = true;
 
 			if( !copy_bones ) continue;
