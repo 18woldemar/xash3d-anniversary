@@ -23,7 +23,7 @@ def build(bld):
 	bld.shlib(
 		source = bld.path.ant_glob('*.c'),
 		target = 'ref_gl3',
-		includes = '. ' + bld.path.get_bld().abspath(),
+		includes = '. khronos ' + bld.path.get_bld().abspath(),
 		features = 'c',
 		defines = 'REF_DLL=1',
 		use = 'ref_common engine_includes sdk_includes public M werror yy_thunks',

@@ -20,7 +20,7 @@ GNU General Public License for more details.
 // pointer fetched through the engine's GL_GetProcAddress at start. A function missing from this list does not
 // exist for the renderer, which is the point - nothing of the fixed-function pipeline can creep back in.
 #define GL_GLEXT_PROTOTYPES 0
-#include <GL/glcorearb.h>
+#include <GL/glcorearb.h> // khronos/: the Windows SDK has no 3.3 header
 
 #ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
 #define GL_TEXTURE_MAX_ANISOTROPY_EXT     0x84FE
