@@ -1304,7 +1304,7 @@ static void R_StudioEntityLight( alight_t *lightinfo )
 		{
 			int att = ( el->key >> 12 ) & 0xF;
 
-			if( att )
+			if( att && att < (int)ARRAYSIZE( ent->attachment ))
 				VectorCopy( ent->attachment[att], el->origin );
 			else
 				VectorCopy( ent->origin, el->origin );
