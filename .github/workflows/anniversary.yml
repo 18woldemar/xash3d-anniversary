@@ -26,13 +26,14 @@ jobs:
         git clone -q --depth 1 https://github.com/KhronosGroup/Vulkan-Headers vkheaders
         curl -fsSL https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-main-windows-x86_64-release.zip -o glslang.zip
         unzip -q glslang.zip -d glslang
-        cygpath -w "$PWD/glslang/bin" >> $GITHUB_PATH
+        cygpath -w "$(dirname "$(find "$PWD/glslang" -name glslangValidator.exe | head -n 1)")" >> $GITHUB_PATH
         # waf adds CFLAGS from the environment to its own
         echo "CFLAGS=-I$(cygpath -m "$PWD/vkheaders/include")" >> $GITHUB_ENV
     - name: Engine
       shell: bash
       run: |
-        ./waf.bat configure -s SDL2_VC -T release -8 --prefix=/
+        # no --prefix: Git Bash would turn / into its own folder
+        ./waf.bat configure -s SDL2_VC -T release -8
         ./waf.bat build
         ./waf.bat install --destdir=out
         cp SDL2_VC/lib/x64/SDL2.dll out/
@@ -40,7 +41,7 @@ jobs:
       shell: bash
       working-directory: hlsdk
       run: |
-        ./waf.bat configure -T release -8 --prefix=/
+        ./waf.bat configure -T release -8
         ./waf.bat build
         ./waf.bat install --destdir=../out
     - uses: actions/upload-artifact@v7
