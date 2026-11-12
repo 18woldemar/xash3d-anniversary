@@ -360,10 +360,36 @@ static qboolean FS_DetermineReadOnlyRootDirectory( char *out, size_t size )
 	return false;
 }
 
-static qboolean FS_SysDirExists( const char *path )
+/*
+The engine's paths are UTF-8; on Windows the C library's narrow calls take the ANSI code page instead, so a library
+in a folder with a non-ASCII name would not be found (filesystem/sys.c goes through wide characters for the same reason).
+*/
+static qboolean FS_SysPathExists( const char *path, qboolean dir )
 {
+#if XASH_WIN32
+	wchar_t wide[MAX_OSPATH];
+	struct _stat st;
+
+	if( !MultiByteToWideChar( CP_UTF8, 0, path, -1, wide, ARRAYSIZE( wide )) || _wstat( wide, &st ) != 0 )
+		return false;
+#else
 	struct stat st;
-	return stat( path, &st ) == 0 && ( st.st_mode & S_IFDIR );
+
+	if( stat( path, &st ) != 0 )
+		return false;
+#endif
+	return !dir || ( st.st_mode & S_IFDIR );
+}
+
+static FILE *FS_SysOpenText( const char *path )
+{
+#if XASH_WIN32
+	wchar_t wide[MAX_OSPATH];
+
+	return MultiByteToWideChar( CP_UTF8, 0, path, -1, wide, ARRAYSIZE( wide )) ? _wfopen( wide, L"r" ) : NULL;
+#else
+	return fopen( path, "r" );
+#endif
 }
 
 /*
@@ -377,11 +403,11 @@ static qboolean FS_FindSteamGame( const char *steam, char *out, size_t size )
 
 	Q_snprintf( out, size, "%s/steamapps/common/Half-Life", steam );
 	Q_snprintf( lib, sizeof( lib ), "%s/%s", out, host.default_gamedir );
-	if( FS_SysDirExists( lib ))
+	if( FS_SysPathExists( lib, true ))
 		return true;
 
 	Q_snprintf( line, sizeof( line ), "%s/steamapps/libraryfolders.vdf", steam );
-	if( !( f = fopen( line, "r" )))
+	if( !( f = FS_SysOpenText( line )))
 		return false;
 
 	while( fgets( line, sizeof( line ), f ))
@@ -403,7 +429,7 @@ static qboolean FS_FindSteamGame( const char *steam, char *out, size_t size )
 
 		Q_snprintf( out, size, "%s/steamapps/common/Half-Life", lib );
 		Q_snprintf( lib, sizeof( lib ), "%s/%s", out, host.default_gamedir );
-		if( FS_SysDirExists( lib ))
+		if( FS_SysPathExists( lib, true ))
 		{
 			fclose( f );
 			return true;
@@ -417,18 +443,19 @@ static qboolean FS_FindSteamGame( const char *steam, char *out, size_t size )
 static qboolean FS_FindSteamInstall( char *out, size_t size )
 {
 #if XASH_WIN32
-	static const struct { HKEY root; const char *key, *value; } keys[] =
+	static const struct { HKEY root; const char *key; const wchar_t *value; } keys[] =
 	{
-		{ HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath" },
-		{ HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Valve\\Steam", "InstallPath" },
-		{ HKEY_LOCAL_MACHINE, "SOFTWARE\\Valve\\Steam", "InstallPath" },
+		{ HKEY_CURRENT_USER, "Software\\Valve\\Steam", L"SteamPath" },
+		{ HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Valve\\Steam", L"InstallPath" },
+		{ HKEY_LOCAL_MACHINE, "SOFTWARE\\Valve\\Steam", L"InstallPath" },
 	};
 	int i;
 
 	for( i = 0; i < (int)ARRAYSIZE( keys ); i++ )
 	{
+		wchar_t wide[MAX_OSPATH];
 		char steam[MAX_OSPATH];
-		DWORD len = sizeof( steam ) - 1, type;
+		DWORD len = sizeof( wide ) - sizeof( wide[0] ), type;
 		HKEY key;
 		LONG ret;
 
@@ -436,14 +463,15 @@ static qboolean FS_FindSteamInstall( char *out, size_t size )
 		if( RegOpenKeyExA( keys[i].root, keys[i].key, 0, KEY_QUERY_VALUE, &key ) != ERROR_SUCCESS )
 			continue;
 
-		ret = RegQueryValueExA( key, keys[i].value, NULL, &type, (LPBYTE)steam, &len );
+		// the wide value, as UTF-8 like every other path of the engine
+		ret = RegQueryValueExW( key, keys[i].value, NULL, &type, (LPBYTE)wide, &len );
 		RegCloseKey( key );
 
 		if( ret != ERROR_SUCCESS || type != REG_SZ )
 			continue;
 
-		steam[len] = 0;
-		if( FS_FindSteamGame( steam, out, size ))
+		wide[len / sizeof( wide[0] )] = 0;
+		if( WideCharToMultiByte( CP_UTF8, 0, wide, -1, steam, sizeof( steam ), NULL, NULL ) && FS_FindSteamGame( steam, out, size ))
 			return true;
 	}
 #elif XASH_LINUX
@@ -485,12 +513,11 @@ void FS_Init( void )
 	if( !FS_DetermineReadOnlyRootDirectory( rodir, sizeof( rodir )))
 	{
 		char path[MAX_OSPATH];
-		struct stat st;
 
 		// no game next to the binaries and none named: the one Steam installed. The binaries' own valve/
 		// holds only saves, settings and the game code, liblist.gam comes with the game
 		Q_snprintf( path, sizeof( path ), "%s/%s/liblist.gam", rootdir, host.default_gamedir );
-		if( stat( path, &st ) != 0 && FS_FindSteamInstall( rodir, sizeof( rodir )))
+		if( !FS_SysPathExists( path, false ) && FS_FindSteamInstall( rodir, sizeof( rodir )))
 			Con_Reportf( "%s: game found in Steam: %s\n", __func__, rodir );
 		else
 			rodir[0] = 0;

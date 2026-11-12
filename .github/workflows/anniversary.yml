@@ -23,8 +23,8 @@ jobs:
         curl -fsSL "https://libsdl.org/release/SDL2-devel-$SDL_VERSION-VC.zip" -o SDL2.zip
         unzip -q SDL2.zip && mv "SDL2-$SDL_VERSION" SDL2_VC
         # ref_vk: the Vulkan headers and glslangValidator, libvulkan itself comes through SDL at run time
-        git clone -q --depth 1 https://github.com/KhronosGroup/Vulkan-Headers vkheaders
-        curl -fsSL https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-main-windows-x86_64-release.zip -o glslang.zip
+        git clone -q --depth 1 --branch vulkan-sdk-1.4.363.0 https://github.com/KhronosGroup/Vulkan-Headers vkheaders
+        curl -fsSL https://github.com/KhronosGroup/glslang/releases/download/16.6.0/glslang-16.6.0-windows-x86_64-release.zip -o glslang.zip
         unzip -q glslang.zip -d glslang
         cygpath -w "$PWD/glslang/bin" >> $GITHUB_PATH # glslang.exe, the Windows build has no glslangValidator
         # waf adds CFLAGS from the environment to its own

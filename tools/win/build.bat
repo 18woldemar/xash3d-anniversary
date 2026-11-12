@@ -8,7 +8,7 @@ set PY=%TOP%\tools\python\python.exe
 rem tools\git.bat answers waf for the git the VM does not have
 set PATH=%TOP%\deps\glslang\bin;%TOP%\tools;%PATH%
 rem waf takes CFLAGS from the environment; MSVC wants forward slashes here
-set CFLAGS=-IC:/work/anniversary/deps/Vulkan-Headers-main/include
+set CFLAGS=-IC:/work/anniversary/deps/Vulkan-Headers-vulkan-sdk-1.4.363.0/include
 cd /d %TOP%
 if exist src rmdir /s /q src
 if exist out rmdir /s /q out
