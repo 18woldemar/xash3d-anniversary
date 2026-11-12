@@ -1,0 +1,69 @@
+# This fork's build check: the engine and hlsdk-anniversary for 64-bit Windows with MSVC and for Linux.
+# Artifacts only, nothing is released from here. A Windows artifact is a test build: the menu art made by
+# tools/mkmenu is not in it.
+name: anniversary
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      SDL_VERSION: 2.32.10
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: recursive
+    - uses: actions/checkout@v6
+      with:
+        repository: 18woldemar/hlsdk-anniversary
+        path: hlsdk
+    - name: Dependencies
+      shell: bash
+      run: |
+        curl -sL "https://libsdl.org/release/SDL2-devel-$SDL_VERSION-VC.zip" -o SDL2.zip
+        unzip -q SDL2.zip && mv "SDL2-$SDL_VERSION" SDL2_VC
+        # ref_vk: the Vulkan headers and glslangValidator, libvulkan itself comes through SDL at run time
+        git clone -q --depth 1 https://github.com/KhronosGroup/Vulkan-Headers vkheaders
+        curl -sL https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-master-windows-Release.zip -o glslang.zip
+        unzip -q glslang.zip -d glslang
+        cygpath -w "$PWD/glslang/bin" >> $GITHUB_PATH
+        # waf adds CFLAGS from the environment to its own
+        echo "CFLAGS=-I$(cygpath -m "$PWD/vkheaders/include")" >> $GITHUB_ENV
+    - name: Engine
+      shell: bash
+      run: |
+        ./waf.bat configure -s SDL2_VC -T release -8 --prefix=/
+        ./waf.bat build
+        ./waf.bat install --destdir=out
+        cp SDL2_VC/lib/x64/SDL2.dll out/
+    - name: Game code
+      shell: bash
+      working-directory: hlsdk
+      run: |
+        ./waf.bat configure -T release -8 --prefix=/
+        ./waf.bat build
+        ./waf.bat install --destdir=../out
+    - uses: actions/upload-artifact@v7
+      with:
+        name: xash3d-anniversary-windows-amd64
+        path: out/*
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: recursive
+    - uses: actions/checkout@v6
+      with:
+        repository: 18woldemar/hlsdk-anniversary
+        path: hlsdk
+    - name: Dependencies
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -yq libsdl2-dev libfreetype-dev libopus-dev libbz2-dev libvorbis-dev libopusfile-dev \
+          libogg-dev libvulkan-dev glslang-tools
+    - name: Engine and game code
+      run: |
+        for tree in . hlsdk; do
+          (cd $tree && ./waf configure -T release -8 --prefix=/ && ./waf build install --destdir=$HOME/out)
+        done
