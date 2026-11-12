@@ -26,7 +26,7 @@ jobs:
         git clone -q --depth 1 https://github.com/KhronosGroup/Vulkan-Headers vkheaders
         curl -fsSL https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-main-windows-x86_64-release.zip -o glslang.zip
         unzip -q glslang.zip -d glslang
-        cygpath -w "$(dirname "$(find "$PWD/glslang" -name glslangValidator.exe | head -n 1)")" >> $GITHUB_PATH
+        cygpath -w "$PWD/glslang/bin" >> $GITHUB_PATH # glslang.exe, the Windows build has no glslangValidator
         # waf adds CFLAGS from the environment to its own
         echo "CFLAGS=-I$(cygpath -m "$PWD/vkheaders/include")" >> $GITHUB_ENV
     - name: Engine
