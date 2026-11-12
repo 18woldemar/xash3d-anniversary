@@ -29,10 +29,11 @@ mkdir -p "$work" "$dst" "$out"
 
 if [ -n "${PACKAGE_WIN:-}" ]; then
 	vm=${BUILD_VM:-win10vm}
-	# the VM has no git: an empty .git and the answers waf wants, for tools/win/git.bat
+	# the VM has no git: an empty .git and the answers waf wants, for tools/win/git.bat; submodules with local
+	# changes of their own (the unused gl4es and maintui here) do not make the build dirty
 	for tree in xash3d-anniversary hlsdk-anniversary; do
 		mkdir -p "$work/git/$tree/.git"
-		printf 'GIT_DESCRIBE=%s\r\nGIT_BRANCH=%s\r\nGIT_DATE=%s\r\n' "$(git -C "$top/$tree" describe --dirty --always)" \
+		printf 'GIT_DESCRIBE=%s\r\nGIT_BRANCH=%s\r\nGIT_DATE=%s\r\n' "$(git -C "$top/$tree" describe --always)$(git -C "$top/$tree" diff --quiet --ignore-submodules HEAD || echo -dirty)" \
 			"$(git -C "$top/$tree" rev-parse --abbrev-ref HEAD)" "$(git -C "$top/$tree" log -1 --format=%ci)" > "$work/git/$tree/.gitinfo"
 	done
 	tar -C "$top" -cf "$work/src.tar" --exclude=.git --exclude=build --exclude='.waf*' --exclude='.lock-waf*' xash3d-anniversary hlsdk-anniversary
