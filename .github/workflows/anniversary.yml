@@ -16,14 +16,15 @@ jobs:
       with:
         repository: 18woldemar/hlsdk-anniversary
         path: hlsdk
+        submodules: recursive
     - name: Dependencies
       shell: bash
       run: |
-        curl -sL "https://libsdl.org/release/SDL2-devel-$SDL_VERSION-VC.zip" -o SDL2.zip
+        curl -fsSL "https://libsdl.org/release/SDL2-devel-$SDL_VERSION-VC.zip" -o SDL2.zip
         unzip -q SDL2.zip && mv "SDL2-$SDL_VERSION" SDL2_VC
         # ref_vk: the Vulkan headers and glslangValidator, libvulkan itself comes through SDL at run time
         git clone -q --depth 1 https://github.com/KhronosGroup/Vulkan-Headers vkheaders
-        curl -sL https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-master-windows-Release.zip -o glslang.zip
+        curl -fsSL https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-main-windows-x86_64-release.zip -o glslang.zip
         unzip -q glslang.zip -d glslang
         cygpath -w "$PWD/glslang/bin" >> $GITHUB_PATH
         # waf adds CFLAGS from the environment to its own
@@ -57,6 +58,7 @@ jobs:
       with:
         repository: 18woldemar/hlsdk-anniversary
         path: hlsdk
+        submodules: recursive
     - name: Dependencies
       run: |
         sudo apt-get update -q
